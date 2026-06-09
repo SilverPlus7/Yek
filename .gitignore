@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+src-tauri/target/
+
+# Tauri
+*.app
+*.dmg
+*.msi
+*.deb
+*.AppImage
+
+# Env
+.env
+.env.local
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Superpowers brainstorm sessions (local only)
+.superpowers/
