@@ -1,9 +1,6 @@
 import type { EntryListItem } from '../../types'
 import { TagBadge } from '../ui/TagBadge'
-
-const TYPE_EMOJI: Record<string, string> = {
-  login: '🔑', api_key: '⚡', note: '📝', ssh_key: '🔒', card: '💳',
-}
+import { ServiceIcon } from '../ui/ServiceIcon'
 const TYPE_LABEL: Record<string, string> = {
   login: 'Login', api_key: 'API Key', note: 'Note', ssh_key: 'SSH Key', card: 'Card',
 }
@@ -24,11 +21,7 @@ export function EntryRow({ entry, selected, onSelect, onCopy }: Props) {
           ? 'bg-slate-700 border-blue-500'
           : 'border-transparent hover:bg-slate-800'}`}
     >
-      <div className="w-7 h-7 rounded shrink-0 flex items-center justify-center text-base bg-slate-700">
-        {entry.icon
-          ? <img src={entry.icon} className="w-5 h-5 rounded" alt="" />
-          : TYPE_EMOJI[entry.entry_type] ?? '🔐'}
-      </div>
+      <ServiceIcon name={entry.name} entryType={entry.entry_type} customIcon={entry.icon} size="sm" />
 
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-slate-200 truncate">{entry.name}</p>
