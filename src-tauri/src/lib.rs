@@ -9,11 +9,14 @@ pub mod vault;
 use commands::AppState;
 use std::sync::Mutex;
 use vault::VaultState;
+use tauri::Manager;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState(Mutex::new(VaultState::new())))
         .invoke_handler(tauri::generate_handler![
             commands::create_vault,
@@ -31,6 +34,19 @@ pub fn run() {
             commands::reload_vault,
             commands::list_backups,
         ])
+        .setup(|app| {
+            let handle = app.handle().clone();
+            app.global_shortcut().on_shortcut("CommandOrControl+Shift+Y", move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        let _ = window.unminimize();
+                    }
+                }
+            })?;
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
