@@ -20,6 +20,11 @@ pub fn run() {
             commands::get_entries,
             commands::get_vault_info,
             commands::get_saved_vault_path,
+            commands::create_entry,
+            commands::delete_entry,
+            commands::get_entry,
+            commands::get_folders,
+            commands::create_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
