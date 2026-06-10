@@ -3,6 +3,7 @@ import { Sidebar } from './Sidebar'
 import { EntryList } from './EntryList'
 import { DetailPanel } from '../entries/DetailPanel'
 import { EntryFormModal } from '../forms/EntryFormModal'
+import { CommandPalette } from '../ui/CommandPalette'
 import { tauriApi } from '../../lib/tauri'
 import { useVaultStore } from '../../store/vault'
 import type { EntryType } from '../../types'
@@ -13,9 +14,21 @@ export function AppShell({ onLock }: Props) {
   const { entries, setEntries, selectedEntryId, setSelectedEntryId } = useVaultStore()
   const [folders, setFolders] = useState<Array<{ id: string; name: string; has_password: boolean }>>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [showPalette, setShowPalette] = useState(false)
 
   useEffect(() => {
     tauriApi.getFolders().then(setFolders).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setShowPalette(v => !v)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
   }, [])
 
   const entryCounts = entries.reduce((acc, e) => {
@@ -83,6 +96,16 @@ export function AppShell({ onLock }: Props) {
         <DetailPanel entryId={selectedEntryId} onEdit={() => {}} onDelete={handleDelete} />
       </div>
       {showAdd && <EntryFormModal onClose={() => setShowAdd(false)} onSave={handleSaveEntry} />}
+      {showPalette && (
+        <CommandPalette
+          entries={entries}
+          onSelect={id => {
+            setSelectedEntryId(id)
+            setShowPalette(false)
+          }}
+          onClose={() => setShowPalette(false)}
+        />
+      )}
     </div>
   )
 }

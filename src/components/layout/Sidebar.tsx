@@ -90,7 +90,10 @@ export function Sidebar({
         <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-1.5 text-xs text-slate-500 cursor-pointer">
           🔍{' '}
           <span>
-            Search <kbd className="text-slate-600">⌘K</kbd>
+            Search{' '}
+            <kbd className="text-slate-600">
+              {/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? '⌘' : 'Ctrl+'}K
+            </kbd>
           </span>
         </div>
       </div>
