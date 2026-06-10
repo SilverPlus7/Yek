@@ -114,6 +114,8 @@ pub fn save_vault(path: &Path, key: &[u8; KEY_LEN], salt: &str, hint: Option<Str
     let json = serde_json::to_vec_pretty(&vault_data).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, &json).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    // Best-effort backup — don't fail the save if backup fails
+    let _ = crate::backup::backup_vault(path);
     Ok(())
 }
 

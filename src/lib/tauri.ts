@@ -35,4 +35,5 @@ export const tauriApi = {
 
   checkVaultChanged: () => invoke<number>('check_vault_changed'),
   reloadVault: (password: string) => invoke<EntryListItem[]>('reload_vault', { password }),
+  listBackups: () => invoke<string[]>('list_backups'),
 }

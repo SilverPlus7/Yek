@@ -258,6 +258,12 @@ pub fn reload_vault(password: String, state: State<'_, AppState>) -> Result<Vec<
     }).collect())
 }
 
+/// List all local backup file paths (newest first).
+#[tauri::command]
+pub fn list_backups() -> Result<Vec<String>, String> {
+    crate::backup::list_backups()
+}
+
 /// Create a new folder and save the vault.
 #[tauri::command]
 pub fn create_folder(name: String, state: State<'_, AppState>) -> Result<serde_json::Value, String> {

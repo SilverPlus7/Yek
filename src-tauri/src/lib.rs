@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod commands;
 pub mod crypto;
 pub mod entries;
@@ -28,6 +29,7 @@ pub fn run() {
             commands::create_folder,
             commands::check_vault_changed,
             commands::reload_vault,
+            commands::list_backups,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
