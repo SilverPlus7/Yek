@@ -91,7 +91,7 @@ pub fn get_entries(state: State<'_, AppState>) -> Result<Vec<EntryListItem>, Str
     Ok(contents.entries.iter().map(|e| EntryListItem {
         id: e.base.id.to_string(),
         name: e.base.name.clone(),
-        entry_type: format!("{:?}", e.entry_type()).to_lowercase(),
+        entry_type: e.entry_type().as_str().to_string(),
         icon: e.base.icon.clone(),
         folder_id: e.base.folder_id.map(|id| id.to_string()),
         tags: e.base.tags.clone(),
@@ -157,7 +157,7 @@ pub fn create_entry(
     let item = EntryListItem {
         id: entry.base.id.to_string(),
         name: entry.base.name.clone(),
-        entry_type: format!("{:?}", entry.entry_type()).to_lowercase(),
+        entry_type: entry.entry_type().as_str().to_string(),
         icon: entry.base.icon.clone(),
         folder_id: entry.base.folder_id.map(|id| id.to_string()),
         tags: entry.base.tags.clone(),
@@ -183,7 +183,11 @@ pub fn delete_entry(id: String, state: State<'_, AppState>) -> Result<(), String
     let mut s = state.0.lock().unwrap();
     let contents = s.contents.as_mut().ok_or("Vault is locked")?;
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let before = contents.entries.len();
     contents.entries.retain(|e| e.base.id != uuid);
+    if contents.entries.len() == before {
+        return Err("Entry not found".to_string());
+    }
     let path = s.vault_path.clone().ok_or("No vault path")?;
     let key = *s.key.as_ref().ok_or("No key")?;
     let salt = s.salt.clone().ok_or("No salt")?;
