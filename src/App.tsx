@@ -27,6 +27,7 @@ export default function App() {
       const info = await tauriApi.createVault(dir, password, hint)
       storeSetVaultInfo(info)
       setVaultInfo(info)
+      setEntries([])
       setScreen('vault')
     } catch (e) { setError(String(e)) }
   }

@@ -17,6 +17,14 @@ const TYPES: Array<{ value: EntryType; label: string; emoji: string }> = [
   { value: 'card',    label: 'Card',    emoji: '💳' },
 ]
 
+const DEFAULT_FIELDS: Record<EntryType, unknown> = {
+  login:   { url: '', username: '', password: '' },
+  api_key: { service: '', key: '' },
+  note:    { content: '' },
+  ssh_key: { public_key: '', private_key: '' },
+  card:    { cardholder: '', number: '', expiry: '', cvv: '' },
+}
+
 interface Props {
   onClose: () => void
   onSave: (data: {
@@ -31,9 +39,14 @@ export function EntryFormModal({ onClose, onSave }: Props) {
   const [tags, setTags] = useState<string[]>([])
   const [tagInput, setTagInput] = useState('')
   const [notes, setNotes] = useState('')
-  const [fields, setFields] = useState<unknown>(null)
+  const [fields, setFields] = useState<unknown>(DEFAULT_FIELDS['login'])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const handleTypeChange = (t: EntryType) => {
+    setType(t)
+    setFields(DEFAULT_FIELDS[t])
+  }
 
   const addTag = () => {
     const t = tagInput.trim().toLowerCase()
@@ -56,7 +69,7 @@ export function EntryFormModal({ onClose, onSave }: Props) {
       <div className="space-y-4">
         <div className="flex gap-1.5 flex-wrap">
           {TYPES.map(t => (
-            <button key={t.value} onClick={() => setType(t.value)}
+            <button key={t.value} onClick={() => handleTypeChange(t.value)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors
                 ${type === t.value ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
               {t.emoji} {t.label}

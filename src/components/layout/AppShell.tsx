@@ -58,17 +58,21 @@ export function AppShell({ onLock }: Props) {
   }
 
   const handleCopy = async (id: string) => {
-    const entry = await tauriApi.getEntry(id) as any
-    const fields = entry?.fields?.fields
-    if (!fields) return
-    const fieldType = entry?.fields?.type
-    const val = fieldType === 'login' ? fields.password
-      : fieldType === 'api_key' ? fields.key
-      : fieldType === 'card' ? fields.number
-      : fieldType === 'ssh_key' ? fields.private_key
-      : fieldType === 'note' ? fields.content
-      : ''
-    if (val) await navigator.clipboard.writeText(val)
+    try {
+      const entry = await tauriApi.getEntry(id) as any
+      const fields = entry?.fields?.fields
+      if (!fields) return
+      const fieldType = entry?.fields?.type
+      const val = fieldType === 'login' ? fields.password
+        : fieldType === 'api_key' ? fields.key
+        : fieldType === 'card' ? fields.number
+        : fieldType === 'ssh_key' ? fields.private_key
+        : fieldType === 'note' ? fields.content
+        : ''
+      if (val) await navigator.clipboard.writeText(val)
+    } catch {
+      // vault may be locked or entry may not exist
+    }
   }
 
   return (

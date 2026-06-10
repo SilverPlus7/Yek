@@ -21,7 +21,7 @@ export function SshKeyDetail({ name, tags, notes, fields, onEdit, onDelete }: Pr
       <div>
         <p className="text-xs text-slate-500 uppercase tracking-widest mb-1">Public Key</p>
         <div className="bg-slate-800 rounded px-3 py-2 flex items-start justify-between gap-2">
-          <pre className="text-xs text-slate-400 font-mono truncate flex-1">{fields.public_key.slice(0, 60)}...</pre>
+          <pre className="text-xs text-slate-400 font-mono truncate flex-1">{fields.public_key.length > 60 ? fields.public_key.slice(0, 60) + '...' : fields.public_key}</pre>
           <button onClick={() => copy(fields.public_key)} className="text-xs text-blue-400 shrink-0">Copy</button>
         </div>
       </div>

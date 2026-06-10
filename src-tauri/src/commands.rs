@@ -165,14 +165,17 @@ pub fn create_entry(
         updated_at: entry.base.updated_at.clone(),
     };
 
-    contents.entries.push(entry);
-
     let path = s.vault_path.clone().ok_or("No vault path")?;
     let key = *s.key.as_ref().ok_or("No key")?;
     let salt = s.salt.clone().ok_or("No salt")?;
     let hint = s.hint.clone();
     let created_at = s.created_at.clone().ok_or("No created_at")?;
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
+
+    contents.entries.push(entry);
+    if let Err(e) = vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap()) {
+        s.contents.as_mut().unwrap().entries.pop();
+        return Err(e);
+    }
 
     Ok(item)
 }

@@ -80,7 +80,7 @@ export function Sidebar({
       <div className="flex items-center gap-2 px-4 py-3.5 border-b border-slate-700">
         <span className="text-xl">🔐</span>
         <span className="font-bold tracking-widest text-slate-100">YEK</span>
-        <button className="ml-auto text-slate-500 hover:text-slate-300 text-sm">
+        <button disabled className="ml-auto text-slate-500 text-sm opacity-50 cursor-not-allowed">
           ⚙️
         </button>
       </div>
