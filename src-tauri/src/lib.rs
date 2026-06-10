@@ -2,6 +2,7 @@ pub mod commands;
 pub mod crypto;
 pub mod entries;
 pub mod settings;
+pub mod sync;
 pub mod vault;
 
 use commands::AppState;
@@ -25,6 +26,8 @@ pub fn run() {
             commands::get_entry,
             commands::get_folders,
             commands::create_folder,
+            commands::check_vault_changed,
+            commands::reload_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

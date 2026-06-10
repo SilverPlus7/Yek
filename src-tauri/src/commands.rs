@@ -3,6 +3,7 @@ use crate::vault::{self, VaultState};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::SystemTime;
 use tauri::State;
 use uuid::Uuid;
 
@@ -222,6 +223,39 @@ pub fn get_folders(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>,
             "has_password": f.password_salt.is_some(),
         }))
         .collect())
+}
+
+/// Returns file mtime as unix seconds (> 0 if file exists).
+#[tauri::command]
+pub fn check_vault_changed(state: State<'_, AppState>) -> u64 {
+    let s = state.0.lock().unwrap();
+    let path = match s.vault_path.as_ref() { Some(p) => p.clone(), None => return 0 };
+    crate::sync::vault_modified_at(&path)
+        .map(|m| m.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs())
+        .unwrap_or(0)
+}
+
+/// Reload vault from disk after conflict resolution.
+#[tauri::command]
+pub fn reload_vault(password: String, state: State<'_, AppState>) -> Result<Vec<EntryListItem>, String> {
+    let mut s = state.0.lock().unwrap();
+    let path = s.vault_path.clone().ok_or("No vault path")?;
+    let (contents, key, salt, hint, created_at) = vault::load_vault(&path, &password)?;
+    s.key = Some(key);
+    s.salt = Some(salt);
+    s.hint = hint;
+    s.created_at = Some(created_at);
+    s.contents = Some(contents);
+    Ok(s.contents.as_ref().unwrap().entries.iter().map(|e| EntryListItem {
+        id: e.base.id.to_string(),
+        name: e.base.name.clone(),
+        entry_type: e.entry_type().as_str().to_string(),
+        icon: e.base.icon.clone(),
+        folder_id: e.base.folder_id.map(|id| id.to_string()),
+        tags: e.base.tags.clone(),
+        favorite: e.base.favorite,
+        updated_at: e.base.updated_at.clone(),
+    }).collect())
 }
 
 /// Create a new folder and save the vault.

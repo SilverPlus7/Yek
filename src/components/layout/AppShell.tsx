@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Sidebar } from './Sidebar'
 import { EntryList } from './EntryList'
 import { DetailPanel } from '../entries/DetailPanel'
 import { EntryFormModal } from '../forms/EntryFormModal'
 import { CommandPalette } from '../ui/CommandPalette'
+import { ConflictDialog } from '../ui/ConflictDialog'
 import { SettingsPanel } from '../settings/SettingsPanel'
 import { tauriApi } from '../../lib/tauri'
 import { useVaultStore } from '../../store/vault'
@@ -17,9 +18,27 @@ export function AppShell({ onLock }: Props) {
   const [showAdd, setShowAdd] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showConflict, setShowConflict] = useState(false)
+  const lastKnownMtime = useRef(0)
 
   useEffect(() => {
     tauriApi.getFolders().then(setFolders).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    const onFocus = async () => {
+      try {
+        const mtime = await tauriApi.checkVaultChanged()
+        if (mtime > 0 && lastKnownMtime.current > 0 && mtime !== lastKnownMtime.current) {
+          setShowConflict(true)
+        }
+        if (mtime > 0 && lastKnownMtime.current === 0) {
+          lastKnownMtime.current = mtime
+        }
+      } catch {}
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [])
 
   useEffect(() => {
@@ -51,6 +70,7 @@ export function AppShell({ onLock }: Props) {
       fields: data.fields,
     })
     setEntries([...entries, item])
+    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
   }
 
   const handleDelete = async (id: string) => {
@@ -58,6 +78,7 @@ export function AppShell({ onLock }: Props) {
     await tauriApi.deleteEntry(id)
     setEntries(entries.filter(e => e.id !== id))
     if (selectedEntryId === id) setSelectedEntryId(null)
+    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
   }
 
   const handleNewFolder = async () => {
@@ -65,6 +86,7 @@ export function AppShell({ onLock }: Props) {
     if (!name?.trim()) return
     const folder = await tauriApi.createFolder(name.trim())
     setFolders(prev => [...prev, folder])
+    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
   }
 
   const handleLock = async () => {
@@ -109,6 +131,22 @@ export function AppShell({ onLock }: Props) {
         />
       )}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} onLock={handleLock} />}
+      {showConflict && (
+        <ConflictDialog
+          onKeepMine={() => setShowConflict(false)}
+          onLoadFromDisk={async () => {
+            const pw = prompt('Enter master password to reload vault:')
+            if (!pw) return
+            try {
+              const reloaded = await tauriApi.reloadVault(pw)
+              setEntries(reloaded)
+              setShowConflict(false)
+              const mtime = await tauriApi.checkVaultChanged()
+              lastKnownMtime.current = mtime
+            } catch { alert('Wrong password or vault error') }
+          }}
+        />
+      )}
     </div>
   )
 }

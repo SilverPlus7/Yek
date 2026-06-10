@@ -32,4 +32,7 @@ export const tauriApi = {
 
   createFolder: (name: string) =>
     invoke<{ id: string; name: string; has_password: boolean }>('create_folder', { name }),
+
+  checkVaultChanged: () => invoke<number>('check_vault_changed'),
+  reloadVault: (password: string) => invoke<EntryListItem[]>('reload_vault', { password }),
 }
