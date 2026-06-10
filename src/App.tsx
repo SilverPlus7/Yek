@@ -14,10 +14,10 @@ export default function App() {
   const { setEntries, setVaultInfo: storeSetVaultInfo } = useVaultStore()
 
   useEffect(() => {
-    tauriApi.getVaultInfo().then(info => {
-      if (!info) { setScreen('setup'); return }
-      setVaultInfo(info)
-      setScreen(info.is_unlocked ? 'vault' : 'unlock')
+    tauriApi.getSavedVaultPath().then(savedPath => {
+      if (!savedPath) { setScreen('setup'); return }
+      setVaultInfo({ vault_path: savedPath, is_unlocked: false })
+      setScreen('unlock')
     })
   }, [])
 

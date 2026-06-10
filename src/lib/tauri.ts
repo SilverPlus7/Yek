@@ -16,4 +16,6 @@ export const tauriApi = {
 
   getVaultInfo: () =>
     invoke<VaultInfo | null>('get_vault_info'),
+
+  getSavedVaultPath: () => invoke<string | null>('get_saved_vault_path'),
 }

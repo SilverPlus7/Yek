@@ -42,6 +42,9 @@ pub fn create_vault(
     s.hint = hint.clone();
     s.created_at = Some(created_at);
     s.contents = Some(contents);
+    let _ = crate::settings::save_settings(&crate::settings::AppSettings {
+        vault_path: Some(path.to_string_lossy().to_string()),
+    });
     Ok(VaultInfo {
         vault_path: path.to_string_lossy().to_string(),
         hint,
@@ -65,6 +68,9 @@ pub fn unlock_vault(
     s.hint = hint.clone();
     s.created_at = Some(created_at);
     s.contents = Some(contents);
+    let _ = crate::settings::save_settings(&crate::settings::AppSettings {
+        vault_path: Some(path.clone()),
+    });
     Ok(VaultInfo { vault_path: path, hint, is_unlocked: true })
 }
 
@@ -90,6 +96,12 @@ pub fn get_entries(state: State<'_, AppState>) -> Result<Vec<EntryListItem>, Str
         favorite: e.base.favorite,
         updated_at: e.base.updated_at.clone(),
     }).collect())
+}
+
+/// Called on app startup to restore last known vault path.
+#[tauri::command]
+pub fn get_saved_vault_path() -> Option<String> {
+    crate::settings::load_settings().vault_path
 }
 
 /// Get vault status (path, hint, locked state).
