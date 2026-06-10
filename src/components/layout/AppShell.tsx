@@ -133,7 +133,13 @@ export function AppShell({ onLock }: Props) {
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} onLock={handleLock} />}
       {showConflict && (
         <ConflictDialog
-          onKeepMine={() => setShowConflict(false)}
+          onKeepMine={async () => {
+            setShowConflict(false)
+            try {
+              const mtime = await tauriApi.checkVaultChanged()
+              lastKnownMtime.current = mtime
+            } catch {}
+          }}
           onLoadFromDisk={async () => {
             const pw = prompt('Enter master password to reload vault:')
             if (!pw) return
