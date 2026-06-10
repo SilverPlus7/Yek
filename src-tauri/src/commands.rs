@@ -137,7 +137,14 @@ pub fn create_entry(
     state: State<'_, AppState>,
 ) -> Result<EntryListItem, String> {
     let mut s = state.0.lock().unwrap();
-    let contents = s.contents.as_mut().ok_or("Vault is locked")?;
+
+    // Extract everything before any mutable borrow of s
+    let path = s.vault_path.clone().ok_or("No vault path")?;
+    let key = *s.key.as_ref().ok_or("No key")?;
+    let salt = s.salt.clone().ok_or("No salt")?;
+    let hint = s.hint.clone();
+    let created_at = s.created_at.clone().ok_or("No created_at")?;
+    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
 
     let fields: EntryFields = match payload.entry_type.as_str() {
         "login" => EntryFields::Login(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
@@ -166,13 +173,8 @@ pub fn create_entry(
         updated_at: entry.base.updated_at.clone(),
     };
 
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-
-    contents.entries.push(entry);
+    // Push (mutable borrow released at end of statement)
+    s.contents.as_mut().unwrap().entries.push(entry);
     if let Err(e) = vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap()) {
         s.contents.as_mut().unwrap().entries.pop();
         return Err(e);
