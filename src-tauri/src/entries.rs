@@ -14,7 +14,6 @@ pub enum EntryType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryBase {
     pub id: Uuid,
-    pub entry_type: EntryType,
     pub name: String,
     pub folder_id: Option<Uuid>,
     pub tags: Vec<String>,
@@ -64,7 +63,7 @@ pub struct CardFields {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", content = "fields", rename_all = "snake_case")]
 pub enum EntryFields {
     Login(LoginFields),
     ApiKey(ApiKeyFields),
@@ -83,17 +82,9 @@ pub struct Entry {
 impl Entry {
     pub fn new(name: String, folder_id: Option<Uuid>, fields: EntryFields) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
-        let entry_type = match &fields {
-            EntryFields::Login(_) => EntryType::Login,
-            EntryFields::ApiKey(_) => EntryType::ApiKey,
-            EntryFields::Note(_) => EntryType::Note,
-            EntryFields::SshKey(_) => EntryType::SshKey,
-            EntryFields::Card(_) => EntryType::Card,
-        };
         Self {
             base: EntryBase {
                 id: Uuid::new_v4(),
-                entry_type,
                 name,
                 folder_id,
                 tags: vec![],
@@ -104,6 +95,16 @@ impl Entry {
                 updated_at: now,
             },
             fields,
+        }
+    }
+
+    pub fn entry_type(&self) -> EntryType {
+        match &self.fields {
+            EntryFields::Login(_) => EntryType::Login,
+            EntryFields::ApiKey(_) => EntryType::ApiKey,
+            EntryFields::Note(_) => EntryType::Note,
+            EntryFields::SshKey(_) => EntryType::SshKey,
+            EntryFields::Card(_) => EntryType::Card,
         }
     }
 }
