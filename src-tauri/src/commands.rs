@@ -1,8 +1,10 @@
+use crate::entries::{Entry, EntryFields};
 use crate::vault::{self, VaultState};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
+use uuid::Uuid;
 
 pub struct AppState(pub Mutex<VaultState>);
 
@@ -89,7 +91,7 @@ pub fn get_entries(state: State<'_, AppState>) -> Result<Vec<EntryListItem>, Str
     Ok(contents.entries.iter().map(|e| EntryListItem {
         id: e.base.id.to_string(),
         name: e.base.name.clone(),
-        entry_type: format!("{:?}", e.entry_type()).to_lowercase(),
+        entry_type: e.entry_type().as_str().to_string(),
         icon: e.base.icon.clone(),
         folder_id: e.base.folder_id.map(|id| id.to_string()),
         tags: e.base.tags.clone(),
@@ -113,4 +115,135 @@ pub fn get_vault_info(state: State<'_, AppState>) -> Option<VaultInfo> {
         hint: s.hint.clone(),
         is_unlocked: s.is_unlocked(),
     })
+}
+
+#[derive(Deserialize)]
+pub struct CreateEntryPayload {
+    pub name: String,
+    pub folder_id: Option<String>,
+    pub tags: Vec<String>,
+    pub notes: String,
+    pub favorite: bool,
+    pub icon: Option<String>,
+    pub fields: serde_json::Value,
+    pub entry_type: String,
+}
+
+/// Create a new entry and save the vault.
+#[tauri::command]
+pub fn create_entry(
+    payload: CreateEntryPayload,
+    state: State<'_, AppState>,
+) -> Result<EntryListItem, String> {
+    let mut s = state.0.lock().unwrap();
+    let contents = s.contents.as_mut().ok_or("Vault is locked")?;
+
+    let fields: EntryFields = match payload.entry_type.as_str() {
+        "login" => EntryFields::Login(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
+        "api_key" => EntryFields::ApiKey(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
+        "note" => EntryFields::Note(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
+        "ssh_key" => EntryFields::SshKey(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
+        "card" => EntryFields::Card(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
+        _ => return Err(format!("Unknown entry type: {}", payload.entry_type)),
+    };
+
+    let folder_id = payload.folder_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+    let mut entry = Entry::new(payload.name, folder_id, fields);
+    entry.base.tags = payload.tags;
+    entry.base.notes = payload.notes;
+    entry.base.favorite = payload.favorite;
+    entry.base.icon = payload.icon;
+
+    let item = EntryListItem {
+        id: entry.base.id.to_string(),
+        name: entry.base.name.clone(),
+        entry_type: entry.entry_type().as_str().to_string(),
+        icon: entry.base.icon.clone(),
+        folder_id: entry.base.folder_id.map(|id| id.to_string()),
+        tags: entry.base.tags.clone(),
+        favorite: entry.base.favorite,
+        updated_at: entry.base.updated_at.clone(),
+    };
+
+    let path = s.vault_path.clone().ok_or("No vault path")?;
+    let key = *s.key.as_ref().ok_or("No key")?;
+    let salt = s.salt.clone().ok_or("No salt")?;
+    let hint = s.hint.clone();
+    let created_at = s.created_at.clone().ok_or("No created_at")?;
+
+    contents.entries.push(entry);
+    if let Err(e) = vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap()) {
+        s.contents.as_mut().unwrap().entries.pop();
+        return Err(e);
+    }
+
+    Ok(item)
+}
+
+/// Delete an entry by id and save the vault.
+#[tauri::command]
+pub fn delete_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = state.0.lock().unwrap();
+    let contents = s.contents.as_mut().ok_or("Vault is locked")?;
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let before = contents.entries.len();
+    contents.entries.retain(|e| e.base.id != uuid);
+    if contents.entries.len() == before {
+        return Err("Entry not found".to_string());
+    }
+    let path = s.vault_path.clone().ok_or("No vault path")?;
+    let key = *s.key.as_ref().ok_or("No key")?;
+    let salt = s.salt.clone().ok_or("No salt")?;
+    let hint = s.hint.clone();
+    let created_at = s.created_at.clone().ok_or("No created_at")?;
+    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
+    Ok(())
+}
+
+/// Get full entry details (including secrets) by id.
+#[tauri::command]
+pub fn get_entry(id: String, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let s = state.0.lock().unwrap();
+    let contents = s.contents.as_ref().ok_or("Vault is locked")?;
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let entry = contents.entries.iter().find(|e| e.base.id == uuid).ok_or("Entry not found")?;
+    serde_json::to_value(entry).map_err(|e| e.to_string())
+}
+
+/// List all folders (without encrypted entry details).
+#[tauri::command]
+pub fn get_folders(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let s = state.0.lock().unwrap();
+    let contents = s.contents.as_ref().ok_or("Vault is locked")?;
+    Ok(contents.folders.iter()
+        .map(|f| serde_json::json!({
+            "id": f.id.to_string(),
+            "name": f.name,
+            "has_password": f.password_salt.is_some(),
+        }))
+        .collect())
+}
+
+/// Create a new folder and save the vault.
+#[tauri::command]
+pub fn create_folder(name: String, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let mut s = state.0.lock().unwrap();
+    let contents = s.contents.as_mut().ok_or("Vault is locked")?;
+    let folder = crate::vault::Folder {
+        id: Uuid::new_v4(),
+        name: name.clone(),
+        password_salt: None,
+        password_nonce: None,
+        encrypted_entries: None,
+        entry_ids: vec![],
+    };
+    let result = serde_json::json!({ "id": folder.id.to_string(), "name": folder.name, "has_password": false });
+    contents.folders.push(folder);
+    let path = s.vault_path.clone().ok_or("No vault path")?;
+    let key = *s.key.as_ref().ok_or("No key")?;
+    let salt = s.salt.clone().ok_or("No salt")?;
+    let hint = s.hint.clone();
+    let created_at = s.created_at.clone().ok_or("No created_at")?;
+    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
+    Ok(result)
 }

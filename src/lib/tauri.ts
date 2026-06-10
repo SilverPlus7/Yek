@@ -18,4 +18,18 @@ export const tauriApi = {
     invoke<VaultInfo | null>('get_vault_info'),
 
   getSavedVaultPath: () => invoke<string | null>('get_saved_vault_path'),
+
+  createEntry: (payload: {
+    name: string; folder_id?: string; tags: string[]; notes: string;
+    favorite: boolean; icon?: string; entry_type: string; fields: unknown
+  }) => invoke<EntryListItem>('create_entry', { payload }),
+
+  deleteEntry: (id: string) => invoke<void>('delete_entry', { id }),
+
+  getEntry: (id: string) => invoke<unknown>('get_entry', { id }),
+
+  getFolders: () => invoke<Array<{ id: string; name: string; has_password: boolean }>>('get_folders'),
+
+  createFolder: (name: string) =>
+    invoke<{ id: string; name: string; has_password: boolean }>('create_folder', { name }),
 }

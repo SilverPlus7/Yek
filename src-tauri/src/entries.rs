@@ -79,6 +79,18 @@ pub struct Entry {
     pub fields: EntryFields,
 }
 
+impl EntryType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EntryType::Login => "login",
+            EntryType::ApiKey => "api_key",
+            EntryType::Note => "note",
+            EntryType::SshKey => "ssh_key",
+            EntryType::Card => "card",
+        }
+    }
+}
+
 impl Entry {
     pub fn new(name: String, folder_id: Option<Uuid>, fields: EntryFields) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
