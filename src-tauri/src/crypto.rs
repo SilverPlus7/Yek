@@ -46,8 +46,11 @@ pub fn decrypt(key_bytes: &[u8; KEY_LEN], ciphertext_b64: &str, nonce_b64: &str)
     let cipher = Aes256Gcm::new(key);
     let ciphertext = B64.decode(ciphertext_b64).map_err(|e| e.to_string())?;
     let nonce_bytes = B64.decode(nonce_b64).map_err(|e| e.to_string())?;
+    if nonce_bytes.len() != NONCE_LEN {
+        return Err("invalid nonce length".to_string());
+    }
     let nonce = Nonce::from_slice(&nonce_bytes);
-    cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|e| e.to_string())
+    cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| "decryption failed".to_string())
 }
 
 #[cfg(test)]
@@ -101,7 +104,9 @@ mod tests {
         let salt = generate_salt();
         let key = derive_key("password", &salt).unwrap();
         let (ct, nonce) = encrypt(&key, b"secret").unwrap();
-        let tampered = ct.replace('A', "B");
+        let mut raw = B64.decode(&ct).unwrap();
+        raw[0] ^= 0xFF;
+        let tampered = B64.encode(raw);
         assert!(decrypt(&key, &tampered, &nonce).is_err());
     }
 }
