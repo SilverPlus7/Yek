@@ -3,6 +3,7 @@ import { tauriApi } from './lib/tauri'
 import { useVaultStore } from './store/vault'
 import { SetupWizard } from './components/screens/SetupWizard'
 import { UnlockScreen } from './components/screens/UnlockScreen'
+import { AppShell } from './components/layout/AppShell'
 import type { VaultInfo } from './types'
 
 type AppScreen = 'loading' | 'setup' | 'unlock' | 'vault'
@@ -58,14 +59,10 @@ export default function App() {
     />
   )
 
-  // vault screen — placeholder until Phase 2
-  return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-100">
-      <div className="text-center space-y-2">
-        <div className="text-4xl">🔐</div>
-        <h1 className="text-xl font-bold">Vault Unlocked</h1>
-        <p className="text-slate-400 text-sm">Main UI coming in Phase 2</p>
-      </div>
-    </div>
+  if (screen === 'vault') return (
+    <AppShell onLock={() => {
+      useVaultStore.getState().lock()
+      setScreen('unlock')
+    }} />
   )
 }
