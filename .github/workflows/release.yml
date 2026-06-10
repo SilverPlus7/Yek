@@ -43,5 +43,5 @@ jobs:
             Windows installer for Yek ${{ github.ref_name }}.
 
             **Install:** Run the `.msi` for a standard install, or the `.exe` (NSIS) for a portable/custom install.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
