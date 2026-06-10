@@ -13,6 +13,7 @@ interface Props {
   entryCounts: Record<string, number>
   onLock: () => void
   onNewFolder: () => void
+  onSettings: () => void
 }
 
 const TYPE_ITEMS: Array<{
@@ -33,6 +34,7 @@ export function Sidebar({
   entryCounts,
   onLock,
   onNewFolder,
+  onSettings,
 }: Props) {
   const { sidebarFilter, setSidebarFilter, setSelectedFolderId } = useUiStore()
   const totalEntries = useVaultStore((s) => s.entries.length)
@@ -80,7 +82,7 @@ export function Sidebar({
       <div className="flex items-center gap-2 px-4 py-3.5 border-b border-slate-700">
         <span className="text-xl">🔐</span>
         <span className="font-bold tracking-widest text-slate-100">YEK</span>
-        <button disabled className="ml-auto text-slate-500 text-sm opacity-50 cursor-not-allowed">
+        <button onClick={onSettings} className="ml-auto text-slate-500 hover:text-slate-300 text-sm">
           ⚙️
         </button>
       </div>

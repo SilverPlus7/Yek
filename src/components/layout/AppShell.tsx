@@ -4,6 +4,7 @@ import { EntryList } from './EntryList'
 import { DetailPanel } from '../entries/DetailPanel'
 import { EntryFormModal } from '../forms/EntryFormModal'
 import { CommandPalette } from '../ui/CommandPalette'
+import { SettingsPanel } from '../settings/SettingsPanel'
 import { tauriApi } from '../../lib/tauri'
 import { useVaultStore } from '../../store/vault'
 import type { EntryType } from '../../types'
@@ -15,6 +16,7 @@ export function AppShell({ onLock }: Props) {
   const [folders, setFolders] = useState<Array<{ id: string; name: string; has_password: boolean }>>([])
   const [showAdd, setShowAdd] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   useEffect(() => {
     tauriApi.getFolders().then(setFolders).catch(console.error)
@@ -90,7 +92,7 @@ export function AppShell({ onLock }: Props) {
 
   return (
     <div className="flex h-screen bg-slate-900 overflow-hidden">
-      <Sidebar folders={folders} entryCounts={entryCounts} onLock={handleLock} onNewFolder={handleNewFolder} />
+      <Sidebar folders={folders} entryCounts={entryCounts} onLock={handleLock} onNewFolder={handleNewFolder} onSettings={() => setShowSettings(true)} />
       <EntryList onAdd={() => setShowAdd(true)} onSelect={setSelectedEntryId} onCopy={handleCopy} />
       <div className="flex-1 flex overflow-hidden">
         <DetailPanel entryId={selectedEntryId} onEdit={() => {}} onDelete={handleDelete} />
@@ -106,6 +108,7 @@ export function AppShell({ onLock }: Props) {
           onClose={() => setShowPalette(false)}
         />
       )}
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} onLock={handleLock} />}
     </div>
   )
 }
