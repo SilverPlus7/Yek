@@ -11,11 +11,11 @@ function score(pw: string): number {
 }
 
 const LEVELS = [
-  { label: 'Weak',   color: 'bg-red-500',    pct: 20 },
-  { label: 'Fair',   color: 'bg-orange-400',  pct: 40 },
-  { label: 'Good',   color: 'bg-yellow-400',  pct: 60 },
-  { label: 'Strong', color: 'bg-green-400',   pct: 80 },
-  { label: 'Strong', color: 'bg-green-500',   pct: 100 },
+  { label: 'Weak',   color: 'bg-red-500',    text: 'text-red-400',    pct: 20 },
+  { label: 'Fair',   color: 'bg-orange-400',  text: 'text-orange-400', pct: 40 },
+  { label: 'Good',   color: 'bg-yellow-400',  text: 'text-yellow-400', pct: 60 },
+  { label: 'Strong', color: 'bg-green-400',   text: 'text-green-400',  pct: 80 },
+  { label: 'Strong', color: 'bg-green-500',   text: 'text-green-500',  pct: 100 },
 ]
 
 export function StrengthMeter({ password }: Props) {
@@ -26,7 +26,7 @@ export function StrengthMeter({ password }: Props) {
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
         <span className="text-slate-400">Strength</span>
-        <span className="font-semibold text-green-400">{level.label}</span>
+        <span className={`font-semibold ${level.text}`}>{level.label}</span>
       </div>
       <div role="progressbar" aria-valuenow={level.pct} aria-valuemin={0} aria-valuemax={100}
         className="h-1 rounded-full bg-slate-700 overflow-hidden">
