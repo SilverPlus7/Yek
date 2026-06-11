@@ -10,6 +10,8 @@ use commands::AppState;
 use std::sync::Mutex;
 use vault::VaultState;
 use tauri::Manager;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -35,7 +37,51 @@ pub fn run() {
             commands::reload_vault,
             commands::list_backups,
         ])
+        // Hide window instead of quitting when the X button is clicked
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+        })
         .setup(|app| {
+            // System tray menu
+            let show = MenuItem::with_id(app, "show", "Show Yek", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .tooltip("Yek — Password Manager")
+                .menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    // Left-click on tray icon → show window
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+
+            // Global hotkey: Ctrl+Shift+Y / Cmd+Shift+Y → bring to front
             let handle = app.handle().clone();
             app.global_shortcut().on_shortcut("CommandOrControl+Shift+Y", move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
@@ -46,6 +92,7 @@ pub fn run() {
                     }
                 }
             })?;
+
             Ok(())
         })
         .run(tauri::generate_context!())
