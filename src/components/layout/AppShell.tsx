@@ -2,20 +2,25 @@ import { useEffect, useRef, useState } from 'react'
 import { Sidebar } from './Sidebar'
 import { EntryList } from './EntryList'
 import { DetailPanel } from '../entries/DetailPanel'
+import { TrashPanel } from '../entries/TrashPanel'
 import { EntryFormModal } from '../forms/EntryFormModal'
 import { CommandPalette } from '../ui/CommandPalette'
 import { ConflictDialog } from '../ui/ConflictDialog'
 import { SettingsPanel } from '../settings/SettingsPanel'
 import { tauriApi } from '../../lib/tauri'
 import { useVaultStore } from '../../store/vault'
-import type { EntryType } from '../../types'
+import { useUiStore } from '../../store/ui'
+import type { EntryListItem, EntryType } from '../../types'
 
 interface Props { onLock: () => void }
 
 export function AppShell({ onLock }: Props) {
   const { entries, setEntries, selectedEntryId, setSelectedEntryId } = useVaultStore()
+  const { sidebarFilter } = useUiStore()
   const [folders, setFolders] = useState<Array<{ id: string; name: string; has_password: boolean }>>([])
+  const [trashItems, setTrashItems] = useState<EntryListItem[]>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [editingEntry, setEditingEntry] = useState<any | null>(null)
   const [showPalette, setShowPalette] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showConflict, setShowConflict] = useState(false)
@@ -23,6 +28,7 @@ export function AppShell({ onLock }: Props) {
 
   useEffect(() => {
     tauriApi.getFolders().then(setFolders).catch(console.error)
+    tauriApi.getTrash().then(setTrashItems).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -57,6 +63,10 @@ export function AppShell({ onLock }: Props) {
     return acc
   }, {} as Record<string, number>)
 
+  const refreshMtime = () => {
+    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
+  }
+
   const handleSaveEntry = async (data: {
     name: string; entry_type: EntryType; tags: string[]
     notes: string; favorite: boolean; fields: unknown
@@ -70,15 +80,63 @@ export function AppShell({ onLock }: Props) {
       fields: data.fields,
     })
     setEntries([...entries, item])
-    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
+    refreshMtime()
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this entry?')) return
-    await tauriApi.deleteEntry(id)
+  const handleEdit = async (id: string) => {
+    try {
+      const entry = await tauriApi.getEntry(id)
+      setEditingEntry(entry)
+    } catch (e) {
+      console.error('Failed to load entry for edit', e)
+    }
+  }
+
+  const handleUpdate = async (data: {
+    name: string; tags: string[]; notes: string; favorite: boolean; fields: unknown
+  }) => {
+    if (!editingEntry) return
+    const updated = await tauriApi.updateEntry({
+      id: editingEntry.id,
+      name: data.name,
+      tags: data.tags,
+      notes: data.notes,
+      favorite: data.favorite,
+      icon: editingEntry.icon,
+      fields: data.fields,
+    })
+    setEntries(entries.map(e => e.id === updated.id ? updated : e))
+    setEditingEntry(null)
+    refreshMtime()
+  }
+
+  const handleMoveToTrash = async (id: string) => {
+    await tauriApi.moveToTrash(id)
+    const moved = entries.find(e => e.id === id)
     setEntries(entries.filter(e => e.id !== id))
+    if (moved) setTrashItems(prev => [...prev, moved])
     if (selectedEntryId === id) setSelectedEntryId(null)
-    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
+    refreshMtime()
+  }
+
+  const handleRestore = async (id: string) => {
+    await tauriApi.restoreFromTrash(id)
+    const restored = trashItems.find(e => e.id === id)
+    setTrashItems(prev => prev.filter(e => e.id !== id))
+    if (restored) setEntries([...entries, restored])
+    refreshMtime()
+  }
+
+  const handleDeleteForever = async (id: string) => {
+    await tauriApi.deleteFromTrash(id)
+    setTrashItems(prev => prev.filter(e => e.id !== id))
+    refreshMtime()
+  }
+
+  const handleEmptyTrash = async () => {
+    await tauriApi.emptyTrash()
+    setTrashItems([])
+    refreshMtime()
   }
 
   const handleNewFolder = async () => {
@@ -86,7 +144,7 @@ export function AppShell({ onLock }: Props) {
     if (!name?.trim()) return
     const folder = await tauriApi.createFolder(name.trim())
     setFolders(prev => [...prev, folder])
-    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
+    refreshMtime()
   }
 
   const handleLock = async () => {
@@ -114,12 +172,39 @@ export function AppShell({ onLock }: Props) {
 
   return (
     <div className="flex h-screen bg-slate-900 overflow-hidden">
-      <Sidebar folders={folders} entryCounts={entryCounts} onLock={handleLock} onNewFolder={handleNewFolder} onSettings={() => setShowSettings(true)} />
-      <EntryList onAdd={() => setShowAdd(true)} onSelect={setSelectedEntryId} onCopy={handleCopy} />
-      <div className="flex-1 flex overflow-hidden">
-        <DetailPanel entryId={selectedEntryId} onEdit={() => {}} onDelete={handleDelete} />
-      </div>
+      <Sidebar
+        folders={folders}
+        entryCounts={entryCounts}
+        trashCount={trashItems.length}
+        onLock={handleLock}
+        onNewFolder={handleNewFolder}
+        onSettings={() => setShowSettings(true)}
+      />
+
+      {sidebarFilter === 'trash' ? (
+        <TrashPanel
+          items={trashItems}
+          onRestore={handleRestore}
+          onDeleteForever={handleDeleteForever}
+          onEmptyTrash={handleEmptyTrash}
+        />
+      ) : (
+        <>
+          <EntryList onAdd={() => setShowAdd(true)} onSelect={setSelectedEntryId} onCopy={handleCopy} />
+          <div className="flex-1 flex overflow-hidden">
+            <DetailPanel entryId={selectedEntryId} onEdit={handleEdit} onDelete={handleMoveToTrash} />
+          </div>
+        </>
+      )}
+
       {showAdd && <EntryFormModal onClose={() => setShowAdd(false)} onSave={handleSaveEntry} />}
+      {editingEntry && (
+        <EntryFormModal
+          onClose={() => setEditingEntry(null)}
+          initialEntry={editingEntry}
+          onUpdate={handleUpdate}
+        />
+      )}
       {showPalette && (
         <CommandPalette
           entries={entries}

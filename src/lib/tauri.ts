@@ -36,4 +36,15 @@ export const tauriApi = {
   checkVaultChanged: () => invoke<number>('check_vault_changed'),
   reloadVault: (password: string) => invoke<EntryListItem[]>('reload_vault', { password }),
   listBackups: () => invoke<string[]>('list_backups'),
+
+  updateEntry: (payload: {
+    id: string; name: string; tags: string[]; notes: string;
+    favorite: boolean; icon?: string; fields: unknown
+  }) => invoke<EntryListItem>('update_entry', { payload }),
+
+  moveToTrash: (id: string) => invoke<void>('move_to_trash', { id }),
+  restoreFromTrash: (id: string) => invoke<void>('restore_from_trash', { id }),
+  deleteFromTrash: (id: string) => invoke<void>('delete_from_trash', { id }),
+  emptyTrash: () => invoke<void>('empty_trash'),
+  getTrash: () => invoke<EntryListItem[]>('get_trash'),
 }

@@ -36,6 +36,12 @@ pub fn run() {
             commands::check_vault_changed,
             commands::reload_vault,
             commands::list_backups,
+            commands::update_entry,
+            commands::move_to_trash,
+            commands::restore_from_trash,
+            commands::delete_from_trash,
+            commands::empty_trash,
+            commands::get_trash,
         ])
         // Hide window instead of quitting when the X button is clicked
         .on_window_event(|window, event| {

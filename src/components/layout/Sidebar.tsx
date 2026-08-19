@@ -11,6 +11,7 @@ interface Folder {
 interface Props {
   folders: Folder[]
   entryCounts: Record<string, number>
+  trashCount: number
   onLock: () => void
   onNewFolder: () => void
   onSettings: () => void
@@ -32,6 +33,7 @@ const TYPE_ITEMS: Array<{
 export function Sidebar({
   folders,
   entryCounts,
+  trashCount,
   onLock,
   onNewFolder,
   onSettings,
@@ -140,6 +142,11 @@ export function Sidebar({
         >
           ＋ New Folder
         </button>
+
+        <p className="px-2 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-600">
+          Other
+        </p>
+        {navItem('trash', '🗑️', 'Trash', trashCount > 0 ? trashCount : undefined)}
       </nav>
 
       {/* Footer */}

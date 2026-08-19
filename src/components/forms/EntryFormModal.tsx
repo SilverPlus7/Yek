@@ -25,25 +25,43 @@ const DEFAULT_FIELDS: Record<EntryType, unknown> = {
   card:    { cardholder: '', number: '', expiry: '', cvv: '' },
 }
 
-interface Props {
+interface CreateProps {
   onClose: () => void
   onSave: (data: {
     name: string; entry_type: EntryType; tags: string[]
     notes: string; favorite: boolean; fields: unknown
   }) => Promise<void>
+  initialEntry?: undefined
+  onUpdate?: undefined
 }
 
-export function EntryFormModal({ onClose, onSave }: Props) {
-  const [type, setType] = useState<EntryType>('login')
-  const [name, setName] = useState('')
-  const [tags, setTags] = useState<string[]>([])
+interface EditProps {
+  onClose: () => void
+  initialEntry: any
+  onUpdate: (data: {
+    name: string; tags: string[]; notes: string; favorite: boolean; fields: unknown
+  }) => Promise<void>
+  onSave?: undefined
+}
+
+type Props = CreateProps | EditProps
+
+export function EntryFormModal({ onClose, onSave, initialEntry, onUpdate }: Props) {
+  const isEdit = !!initialEntry
+  const initType: EntryType = isEdit ? (initialEntry.fields?.type as EntryType) : 'login'
+  const initFields = isEdit ? (initialEntry.fields?.fields ?? DEFAULT_FIELDS[initType]) : DEFAULT_FIELDS['login']
+
+  const [type, setType] = useState<EntryType>(initType)
+  const [name, setName] = useState(isEdit ? initialEntry.name : '')
+  const [tags, setTags] = useState<string[]>(isEdit ? (initialEntry.tags ?? []) : [])
   const [tagInput, setTagInput] = useState('')
-  const [notes, setNotes] = useState('')
-  const [fields, setFields] = useState<unknown>(DEFAULT_FIELDS['login'])
+  const [notes, setNotes] = useState(isEdit ? (initialEntry.notes ?? '') : '')
+  const [fields, setFields] = useState<unknown>(initFields)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const handleTypeChange = (t: EntryType) => {
+    if (isEdit) return
     setType(t)
     setFields(DEFAULT_FIELDS[t])
   }
@@ -58,20 +76,26 @@ export function EntryFormModal({ onClose, onSave }: Props) {
     if (!name.trim()) { setError('Name is required'); return }
     setSaving(true)
     try {
-      await onSave({ name: name.trim(), entry_type: type, tags, notes, favorite: false, fields })
+      if (isEdit && onUpdate) {
+        await onUpdate({ name: name.trim(), tags, notes, favorite: initialEntry.favorite ?? false, fields })
+      } else if (onSave) {
+        await onSave({ name: name.trim(), entry_type: type, tags, notes, favorite: false, fields })
+      }
       onClose()
     } catch (e) { setError(String(e)) }
     finally { setSaving(false) }
   }
 
   return (
-    <Modal title="Add New Entry" onClose={onClose}>
+    <Modal title={isEdit ? 'Edit Entry' : 'Add New Entry'} onClose={onClose}>
       <div className="space-y-4">
         <div className="flex gap-1.5 flex-wrap">
           {TYPES.map(t => (
             <button key={t.value} onClick={() => handleTypeChange(t.value)}
+              disabled={isEdit}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors
-                ${type === t.value ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                ${type === t.value ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}
+                ${isEdit ? 'opacity-50 cursor-default' : ''}`}>
               {t.emoji} {t.label}
             </button>
           ))}
@@ -81,11 +105,11 @@ export function EntryFormModal({ onClose, onSave }: Props) {
           <input className={inputCls} placeholder="e.g. GitHub Token" value={name} onChange={e => setName(e.target.value)} autoFocus />
         </Field>
 
-        {type === 'login'   && <LoginForm   onChange={setFields} />}
-        {type === 'api_key' && <ApiKeyForm  onChange={setFields} />}
-        {type === 'note'    && <NoteForm    onChange={setFields} />}
-        {type === 'ssh_key' && <SshKeyForm  onChange={setFields} />}
-        {type === 'card'    && <CardForm    onChange={setFields} />}
+        {type === 'login'   && <LoginForm   onChange={setFields} initial={isEdit ? initFields as any : undefined} />}
+        {type === 'api_key' && <ApiKeyForm  onChange={setFields} initial={isEdit ? initFields as any : undefined} />}
+        {type === 'note'    && <NoteForm    onChange={setFields} initial={isEdit ? initFields as any : undefined} />}
+        {type === 'ssh_key' && <SshKeyForm  onChange={setFields} initial={isEdit ? initFields as any : undefined} />}
+        {type === 'card'    && <CardForm    onChange={setFields} initial={isEdit ? initFields as any : undefined} />}
 
         <Field label="Tags">
           <div className="flex gap-2 flex-wrap mb-2">
@@ -110,7 +134,7 @@ export function EntryFormModal({ onClose, onSave }: Props) {
           <button onClick={onClose} className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 py-2 rounded-md text-sm">Cancel</button>
           <button onClick={handleSave} disabled={saving}
             className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold py-2 rounded-md text-sm">
-            {saving ? 'Saving...' : 'Save Entry'}
+            {saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Save Entry'}
           </button>
         </div>
       </div>

@@ -34,6 +34,8 @@ pub struct VaultContents {
     pub folders: Vec<Folder>,
     pub entries: Vec<Entry>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub trash: Vec<Entry>,
 }
 
 /// Runtime vault state held by the Tauri app.
@@ -66,7 +68,7 @@ pub fn create_vault(dir: &Path, password: &str, hint: Option<String>) -> Result<
     let salt = generate_salt();
     let key = derive_key(password, &salt)?;
     let now = chrono::Utc::now().to_rfc3339();
-    let contents = VaultContents { folders: vec![], entries: vec![], tags: vec![] };
+    let contents = VaultContents { folders: vec![], entries: vec![], tags: vec![], trash: vec![] };
     let plaintext = serde_json::to_vec(&contents).map_err(|e| e.to_string())?;
     let (ciphertext, nonce) = encrypt(&key, &plaintext)?;
     let vault_data = VaultData {
