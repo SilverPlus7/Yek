@@ -6,11 +6,12 @@ import type { EntryListItem } from '../../types'
 
 interface Props {
   onAdd: () => void
+  onGeneratePassword: () => void
   onSelect: (id: string) => void
   onCopy: (id: string) => void
 }
 
-export function EntryList({ onAdd, onSelect, onCopy }: Props) {
+export function EntryList({ onAdd, onGeneratePassword, onSelect, onCopy }: Props) {
   const entries = useVaultStore(s => s.entries)
   const selectedId = useVaultStore(s => s.selectedEntryId)
   const { sidebarFilter, selectedFolderId } = useUiStore()
@@ -30,9 +31,11 @@ export function EntryList({ onAdd, onSelect, onCopy }: Props) {
     : sidebarFilter.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()) + 's'
 
   return (
-    <div className="w-60 border-r border-slate-700 flex flex-col bg-slate-900 shrink-0">
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-700">
-        <span className="text-sm font-semibold text-slate-200">{title}</span>
+    <div className="w-full h-full border-r border-slate-700 flex flex-col bg-slate-900">
+      <div className="flex items-center gap-1 px-3 py-2.5 border-b border-slate-700">
+        <span className="text-sm font-semibold text-slate-200 flex-1 truncate">{title}</span>
+        <button onClick={onGeneratePassword} title="Generate password"
+          className="text-slate-400 hover:text-slate-200 text-base leading-none px-1">🔑</button>
         <button onClick={onAdd} title="Add entry"
           className="text-blue-400 hover:text-blue-300 text-2xl leading-none font-light">＋</button>
       </div>

@@ -8,17 +8,18 @@ import { CardDetail } from './CardDetail'
 
 interface Props {
   entryId: string | null
+  reloadKey?: number
   onEdit: (id: string) => void
   onDelete: (id: string) => void
 }
 
-export function DetailPanel({ entryId, onEdit, onDelete }: Props) {
+export function DetailPanel({ entryId, reloadKey, onEdit, onDelete }: Props) {
   const [entry, setEntry] = useState<any>(null)
 
   useEffect(() => {
     if (!entryId) { setEntry(null); return }
     tauriApi.getEntry(entryId).then(setEntry).catch(console.error)
-  }, [entryId])
+  }, [entryId, reloadKey])
 
   if (!entryId) return (
     <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">

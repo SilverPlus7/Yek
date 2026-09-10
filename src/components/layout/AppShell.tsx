@@ -4,6 +4,8 @@ import { EntryList } from './EntryList'
 import { DetailPanel } from '../entries/DetailPanel'
 import { TrashPanel } from '../entries/TrashPanel'
 import { EntryFormModal } from '../forms/EntryFormModal'
+import { PasswordGenerator } from '../tools/PasswordGenerator'
+import { ResizeDivider } from '../ui/ResizeDivider'
 import { CommandPalette } from '../ui/CommandPalette'
 import { ConflictDialog } from '../ui/ConflictDialog'
 import { SettingsPanel } from '../settings/SettingsPanel'
@@ -12,19 +14,49 @@ import { useVaultStore } from '../../store/vault'
 import { useUiStore } from '../../store/ui'
 import type { EntryListItem, EntryType } from '../../types'
 
+const SIDEBAR_MIN = 160
+const SIDEBAR_MAX = 360
+const ENTRY_LIST_MIN = 180
+const ENTRY_LIST_MAX = 480
+
+function loadWidth(key: string, def: number): number {
+  try { return Math.max(SIDEBAR_MIN, parseInt(localStorage.getItem(key) || '') || def) } catch { return def }
+}
+
 interface Props { onLock: () => void }
 
 export function AppShell({ onLock }: Props) {
   const { entries, setEntries, selectedEntryId, setSelectedEntryId } = useVaultStore()
   const { sidebarFilter } = useUiStore()
+
   const [folders, setFolders] = useState<Array<{ id: string; name: string; has_password: boolean }>>([])
   const [trashItems, setTrashItems] = useState<EntryListItem[]>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [showPasswordGen, setShowPasswordGen] = useState(false)
   const [editingEntry, setEditingEntry] = useState<any | null>(null)
+  const [detailReloadKey, setDetailReloadKey] = useState(0)
   const [showPalette, setShowPalette] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showConflict, setShowConflict] = useState(false)
   const lastKnownMtime = useRef(0)
+
+  // Resizable columns
+  const [sidebarWidth, setSidebarWidth] = useState(() => loadWidth('yek-sidebar-w', 192))
+  const [entryListWidth, setEntryListWidth] = useState(() => loadWidth('yek-entrylist-w', 240))
+
+  const resizeSidebar = (delta: number) =>
+    setSidebarWidth(w => {
+      const next = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, w + delta))
+      try { localStorage.setItem('yek-sidebar-w', String(next)) } catch {}
+      return next
+    })
+
+  const resizeEntryList = (delta: number) =>
+    setEntryListWidth(w => {
+      const next = Math.max(ENTRY_LIST_MIN, Math.min(ENTRY_LIST_MAX, w + delta))
+      try { localStorage.setItem('yek-entrylist-w', String(next)) } catch {}
+      return next
+    })
 
   useEffect(() => {
     tauriApi.getFolders().then(setFolders).catch(console.error)
@@ -63,21 +95,16 @@ export function AppShell({ onLock }: Props) {
     return acc
   }, {} as Record<string, number>)
 
-  const refreshMtime = () => {
+  const refreshMtime = () =>
     tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
-  }
 
   const handleSaveEntry = async (data: {
     name: string; entry_type: EntryType; tags: string[]
     notes: string; favorite: boolean; fields: unknown
   }) => {
     const item = await tauriApi.createEntry({
-      name: data.name,
-      entry_type: data.entry_type,
-      tags: data.tags,
-      notes: data.notes,
-      favorite: data.favorite,
-      fields: data.fields,
+      name: data.name, entry_type: data.entry_type, tags: data.tags,
+      notes: data.notes, favorite: data.favorite, fields: data.fields,
     })
     setEntries([...entries, item])
     refreshMtime()
@@ -88,7 +115,7 @@ export function AppShell({ onLock }: Props) {
       const entry = await tauriApi.getEntry(id)
       setEditingEntry(entry)
     } catch (e) {
-      console.error('Failed to load entry for edit', e)
+      console.error('Failed to load entry for edit:', e)
     }
   }
 
@@ -98,15 +125,22 @@ export function AppShell({ onLock }: Props) {
     if (!editingEntry) return
     const updated = await tauriApi.updateEntry({
       id: editingEntry.id,
-      name: data.name,
-      tags: data.tags,
-      notes: data.notes,
-      favorite: data.favorite,
-      icon: editingEntry.icon,
-      fields: data.fields,
+      name: data.name, tags: data.tags, notes: data.notes,
+      favorite: data.favorite, icon: editingEntry.icon, fields: data.fields,
     })
     setEntries(entries.map(e => e.id === updated.id ? updated : e))
     setEditingEntry(null)
+    // Bump reload key so DetailPanel re-fetches with the updated data
+    setDetailReloadKey(k => k + 1)
+    refreshMtime()
+  }
+
+  const handleCreateLogin = async (data: { name: string; username: string; url: string; password: string }) => {
+    const item = await tauriApi.createEntry({
+      name: data.name, entry_type: 'login', tags: [], notes: '', favorite: false,
+      fields: { url: data.url, username: data.username, password: data.password },
+    })
+    setEntries([...entries, item])
     refreshMtime()
   }
 
@@ -157,29 +191,32 @@ export function AppShell({ onLock }: Props) {
       const entry = await tauriApi.getEntry(id) as any
       const fields = entry?.fields?.fields
       if (!fields) return
-      const fieldType = entry?.fields?.type
-      const val = fieldType === 'login' ? fields.password
-        : fieldType === 'api_key' ? fields.key
-        : fieldType === 'card' ? fields.number
-        : fieldType === 'ssh_key' ? fields.private_key
-        : fieldType === 'note' ? fields.content
+      const ft = entry?.fields?.type
+      const val = ft === 'login' ? fields.password
+        : ft === 'api_key' ? fields.key
+        : ft === 'card' ? fields.number
+        : ft === 'ssh_key' ? fields.private_key
+        : ft === 'note' ? fields.content
         : ''
       if (val) await navigator.clipboard.writeText(val)
-    } catch {
-      // vault may be locked or entry may not exist
-    }
+    } catch {}
   }
 
   return (
     <div className="flex h-screen bg-slate-900 overflow-hidden">
-      <Sidebar
-        folders={folders}
-        entryCounts={entryCounts}
-        trashCount={trashItems.length}
-        onLock={handleLock}
-        onNewFolder={handleNewFolder}
-        onSettings={() => setShowSettings(true)}
-      />
+      {/* Sidebar — resizable */}
+      <div style={{ width: sidebarWidth }} className="shrink-0 flex flex-col overflow-hidden">
+        <Sidebar
+          folders={folders}
+          entryCounts={entryCounts}
+          trashCount={trashItems.length}
+          onLock={handleLock}
+          onNewFolder={handleNewFolder}
+          onSettings={() => setShowSettings(true)}
+        />
+      </div>
+
+      <ResizeDivider onResize={resizeSidebar} />
 
       {sidebarFilter === 'trash' ? (
         <TrashPanel
@@ -190,14 +227,36 @@ export function AppShell({ onLock }: Props) {
         />
       ) : (
         <>
-          <EntryList onAdd={() => setShowAdd(true)} onSelect={setSelectedEntryId} onCopy={handleCopy} />
+          {/* Entry list — resizable */}
+          <div style={{ width: entryListWidth }} className="shrink-0 flex flex-col overflow-hidden">
+            <EntryList
+              onAdd={() => setShowAdd(true)}
+              onGeneratePassword={() => setShowPasswordGen(true)}
+              onSelect={setSelectedEntryId}
+              onCopy={handleCopy}
+            />
+          </div>
+
+          <ResizeDivider onResize={resizeEntryList} />
+
+          {/* Detail panel — takes remaining space */}
           <div className="flex-1 flex overflow-hidden">
-            <DetailPanel entryId={selectedEntryId} onEdit={handleEdit} onDelete={handleMoveToTrash} />
+            <DetailPanel
+              entryId={selectedEntryId}
+              reloadKey={detailReloadKey}
+              onEdit={handleEdit}
+              onDelete={handleMoveToTrash}
+            />
           </div>
         </>
       )}
 
-      {showAdd && <EntryFormModal onClose={() => setShowAdd(false)} onSave={handleSaveEntry} />}
+      {showAdd && (
+        <EntryFormModal onClose={() => setShowAdd(false)} onSave={handleSaveEntry} />
+      )}
+      {showPasswordGen && (
+        <PasswordGenerator onClose={() => setShowPasswordGen(false)} onCreateLogin={handleCreateLogin} />
+      )}
       {editingEntry && (
         <EntryFormModal
           onClose={() => setEditingEntry(null)}
@@ -208,10 +267,7 @@ export function AppShell({ onLock }: Props) {
       {showPalette && (
         <CommandPalette
           entries={entries}
-          onSelect={id => {
-            setSelectedEntryId(id)
-            setShowPalette(false)
-          }}
+          onSelect={id => { setSelectedEntryId(id); setShowPalette(false) }}
           onClose={() => setShowPalette(false)}
         />
       )}
@@ -220,10 +276,7 @@ export function AppShell({ onLock }: Props) {
         <ConflictDialog
           onKeepMine={async () => {
             setShowConflict(false)
-            try {
-              const mtime = await tauriApi.checkVaultChanged()
-              lastKnownMtime.current = mtime
-            } catch {}
+            try { lastKnownMtime.current = await tauriApi.checkVaultChanged() } catch {}
           }}
           onLoadFromDisk={async () => {
             const pw = prompt('Enter master password to reload vault:')
@@ -232,8 +285,7 @@ export function AppShell({ onLock }: Props) {
               const reloaded = await tauriApi.reloadVault(pw)
               setEntries(reloaded)
               setShowConflict(false)
-              const mtime = await tauriApi.checkVaultChanged()
-              lastKnownMtime.current = mtime
+              lastKnownMtime.current = await tauriApi.checkVaultChanged()
             } catch { alert('Wrong password or vault error') }
           }}
         />
