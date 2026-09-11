@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileAttachment {
+    pub name: String,
+    pub mime: String,
+    pub content: String, // base64-encoded bytes
+    pub size: usize,     // original file size in bytes
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryType {
@@ -22,6 +30,8 @@ pub struct EntryBase {
     pub favorite: bool,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub attachments: Vec<FileAttachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +115,7 @@ impl Entry {
                 favorite: false,
                 created_at: now.clone(),
                 updated_at: now,
+                attachments: vec![],
             },
             fields,
         }

@@ -49,3 +49,10 @@ export interface CardFields {
   cvv: string
   billing_address?: string
 }
+
+export interface FileAttachment {
+  name: string
+  mime: string
+  content: string // base64
+  size: number    // original bytes
+}

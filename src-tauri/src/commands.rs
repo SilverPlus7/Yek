@@ -1,11 +1,34 @@
 use crate::entries::{Entry, EntryFields};
 use crate::vault::{self, VaultState};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::SystemTime;
 use tauri::State;
 use uuid::Uuid;
+
+const MAX_ATTACHMENT_BYTES: usize = 500 * 1024;
+
+fn mime_for_filename(name: &str) -> String {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "pem" | "key" | "crt" | "cer" | "csr" => "application/x-pem-file",
+        "pub" => "text/plain",
+        "p12" | "pfx" => "application/x-pkcs12",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "zip" => "application/zip",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
 
 pub struct AppState(pub Mutex<VaultState>);
 
@@ -432,6 +455,90 @@ pub fn get_trash(state: State<'_, AppState>) -> Result<Vec<EntryListItem>, Strin
         favorite: e.base.favorite,
         updated_at: e.base.updated_at.clone(),
     }).collect())
+}
+
+/// Attach a file (by path) to an entry — reads, base64-encodes, stores inside vault.
+#[tauri::command]
+pub fn attach_file(entry_id: String, path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err(format!(
+            "File too large: {} KB (max 500 KB)",
+            bytes.len() / 1024
+        ));
+    }
+    let file_name = std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let mime = mime_for_filename(&file_name);
+    let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let attachment = crate::entries::FileAttachment { name: file_name, mime, content, size: bytes.len() };
+
+    let mut s = state.0.lock().unwrap();
+    let vault_path = s.vault_path.clone().ok_or("No vault path")?;
+    let key = *s.key.as_ref().ok_or("No key")?;
+    let salt = s.salt.clone().ok_or("No salt")?;
+    let hint = s.hint.clone();
+    let created_at = s.created_at.clone().ok_or("No created_at")?;
+    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
+
+    let uuid = Uuid::parse_str(&entry_id).map_err(|e| e.to_string())?;
+    let entry = s.contents.as_mut().unwrap().entries
+        .iter_mut().find(|e| e.base.id == uuid)
+        .ok_or("Entry not found")?;
+    if entry.base.attachments.iter().any(|a| a.name == attachment.name) {
+        return Err(format!("Attachment '{}' already exists", attachment.name));
+    }
+    entry.base.attachments.push(attachment);
+    entry.base.updated_at = chrono::Utc::now().to_rfc3339();
+
+    vault::save_vault(&vault_path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
+    Ok(())
+}
+
+/// Write an attachment's decoded bytes to dest_path on disk.
+#[tauri::command]
+pub fn download_attachment(
+    entry_id: String,
+    name: String,
+    dest_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let s = state.0.lock().unwrap();
+    let contents = s.contents.as_ref().ok_or("Vault is locked")?;
+    let uuid = Uuid::parse_str(&entry_id).map_err(|e| e.to_string())?;
+    let entry = contents.entries.iter().find(|e| e.base.id == uuid).ok_or("Entry not found")?;
+    let att = entry.base.attachments.iter().find(|a| a.name == name).ok_or("Attachment not found")?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(&att.content).map_err(|e| e.to_string())?;
+    std::fs::write(&dest_path, &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Remove an attachment from an entry and save the vault.
+#[tauri::command]
+pub fn remove_attachment(entry_id: String, name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = state.0.lock().unwrap();
+    let vault_path = s.vault_path.clone().ok_or("No vault path")?;
+    let key = *s.key.as_ref().ok_or("No key")?;
+    let salt = s.salt.clone().ok_or("No salt")?;
+    let hint = s.hint.clone();
+    let created_at = s.created_at.clone().ok_or("No created_at")?;
+    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
+
+    let uuid = Uuid::parse_str(&entry_id).map_err(|e| e.to_string())?;
+    let entry = s.contents.as_mut().unwrap().entries
+        .iter_mut().find(|e| e.base.id == uuid)
+        .ok_or("Entry not found")?;
+    let before = entry.base.attachments.len();
+    entry.base.attachments.retain(|a| a.name != name);
+    if entry.base.attachments.len() == before {
+        return Err("Attachment not found".to_string());
+    }
+    entry.base.updated_at = chrono::Utc::now().to_rfc3339();
+
+    vault::save_vault(&vault_path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
+    Ok(())
 }
 
 /// Create a new folder and save the vault.

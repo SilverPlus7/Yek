@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { tauriApi } from '../../lib/tauri'
 import { LoginDetail } from './LoginDetail'
 import { ApiKeyDetail } from './ApiKeyDetail'
 import { NoteDetail } from './NoteDetail'
 import { SshKeyDetail } from './SshKeyDetail'
 import { CardDetail } from './CardDetail'
+import { AttachmentSection } from './AttachmentSection'
 
 interface Props {
   entryId: string | null
@@ -16,9 +17,11 @@ interface Props {
 export function DetailPanel({ entryId, reloadKey, onEdit, onDelete }: Props) {
   const [entry, setEntry] = useState<any>(null)
 
+  const fetchEntry = (id: string) => tauriApi.getEntry(id).then(setEntry).catch(console.error)
+
   useEffect(() => {
     if (!entryId) { setEntry(null); return }
-    tauriApi.getEntry(entryId).then(setEntry).catch(console.error)
+    fetchEntry(entryId)
   }, [entryId, reloadKey])
 
   if (!entryId) return (
@@ -49,11 +52,27 @@ export function DetailPanel({ entryId, reloadKey, onEdit, onDelete }: Props) {
   const type = entry.fields?.type
   const typeFields = entry.fields?.fields
 
-  if (type === 'login') return <div className="flex-1 p-4 overflow-y-auto"><LoginDetail {...commonProps} fields={typeFields} /></div>
-  if (type === 'api_key') return <div className="flex-1 p-4 overflow-y-auto"><ApiKeyDetail {...commonProps} fields={typeFields} /></div>
-  if (type === 'note') return <div className="flex-1 p-4 overflow-y-auto"><NoteDetail {...commonProps} fields={typeFields} /></div>
-  if (type === 'ssh_key') return <div className="flex-1 p-4 overflow-y-auto"><SshKeyDetail {...commonProps} fields={typeFields} /></div>
-  if (type === 'card') return <div className="flex-1 p-4 overflow-y-auto"><CardDetail {...commonProps} fields={typeFields} /></div>
+  const attachmentSection = (
+    <AttachmentSection
+      entryId={entryId}
+      attachments={entry.attachments ?? []}
+      onChanged={() => fetchEntry(entryId)}
+    />
+  )
+
+  const wrapDetail = (children: React.ReactNode) => (
+    <div className="flex-1 p-4 overflow-y-auto space-y-4">
+      {children}
+      <hr className="border-slate-700" />
+      {attachmentSection}
+    </div>
+  )
+
+  if (type === 'login') return wrapDetail(<LoginDetail {...commonProps} fields={typeFields} />)
+  if (type === 'api_key') return wrapDetail(<ApiKeyDetail {...commonProps} fields={typeFields} />)
+  if (type === 'note') return wrapDetail(<NoteDetail {...commonProps} fields={typeFields} />)
+  if (type === 'ssh_key') return wrapDetail(<SshKeyDetail {...commonProps} fields={typeFields} />)
+  if (type === 'card') return wrapDetail(<CardDetail {...commonProps} fields={typeFields} />)
 
   return <div className="flex-1 p-4 text-slate-500">Unknown entry type</div>
 }

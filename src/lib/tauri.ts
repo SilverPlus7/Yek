@@ -47,4 +47,11 @@ export const tauriApi = {
   deleteFromTrash: (id: string) => invoke<void>('delete_from_trash', { id }),
   emptyTrash: () => invoke<void>('empty_trash'),
   getTrash: () => invoke<EntryListItem[]>('get_trash'),
+
+  attachFile: (entryId: string, path: string) =>
+    invoke<void>('attach_file', { entryId, path }),
+  downloadAttachment: (entryId: string, name: string, destPath: string) =>
+    invoke<void>('download_attachment', { entryId, name, destPath }),
+  removeAttachment: (entryId: string, name: string) =>
+    invoke<void>('remove_attachment', { entryId, name }),
 }

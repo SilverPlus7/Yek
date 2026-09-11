@@ -42,6 +42,9 @@ pub fn run() {
             commands::delete_from_trash,
             commands::empty_trash,
             commands::get_trash,
+            commands::attach_file,
+            commands::download_attachment,
+            commands::remove_attachment,
         ])
         // Hide window instead of quitting when the X button is clicked
         .on_window_event(|window, event| {
