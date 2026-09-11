@@ -1,12 +1,7 @@
 import { useVaultStore } from '../../store/vault'
 import { useUiStore } from '../../store/ui'
 import type { SidebarFilter } from '../../store/ui'
-
-interface Folder {
-  id: string
-  name: string
-  has_password: boolean
-}
+import type { Folder } from '../../types'
 
 interface Props {
   folders: Folder[]
@@ -15,6 +10,7 @@ interface Props {
   onLock: () => void
   onNewFolder: () => void
   onSettings: () => void
+  onSearch: () => void
 }
 
 const TYPE_ITEMS: Array<{
@@ -37,8 +33,9 @@ export function Sidebar({
   onLock,
   onNewFolder,
   onSettings,
+  onSearch,
 }: Props) {
-  const { sidebarFilter, setSidebarFilter, setSelectedFolderId } = useUiStore()
+  const { sidebarFilter, setSidebarFilter, selectedFolderId, setSelectedFolderId } = useUiStore()
   const totalEntries = useVaultStore((s) => s.entries.length)
 
   const setFilter = (f: SidebarFilter) => {
@@ -91,7 +88,10 @@ export function Sidebar({
 
       {/* Search */}
       <div className="px-3 py-2">
-        <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-1.5 text-xs text-slate-500 cursor-pointer">
+        <button
+          onClick={onSearch}
+          className="w-full flex items-center gap-2 bg-slate-900 border border-slate-700 hover:border-slate-500 rounded-md px-2.5 py-1.5 text-xs text-slate-500 text-left"
+        >
           🔍{' '}
           <span>
             Search{' '}
@@ -99,7 +99,7 @@ export function Sidebar({
               {/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? '⌘' : 'Ctrl+'}K
             </kbd>
           </span>
-        </div>
+        </button>
       </div>
 
       {/* Navigation */}
@@ -127,7 +127,12 @@ export function Sidebar({
               setSidebarFilter('folder')
               setSelectedFolderId(f.id)
             }}
-            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors
+              ${
+                sidebarFilter === 'folder' && selectedFolderId === f.id
+                  ? 'bg-blue-600 text-white font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+              }`}
           >
             <span>{f.has_password ? '🔐' : '📁'}</span>
             <span className="flex-1 text-left truncate">{f.name}</span>

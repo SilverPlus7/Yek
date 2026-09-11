@@ -7,7 +7,7 @@ import { NoteForm } from './NoteForm'
 import { SshKeyForm } from './SshKeyForm'
 import { CardForm } from './CardForm'
 import { TagBadge } from '../ui/TagBadge'
-import type { EntryType } from '../../types'
+import type { EntryType, Folder } from '../../types'
 
 const TYPES: Array<{ value: EntryType; label: string; emoji: string }> = [
   { value: 'login',   label: 'Login',   emoji: '🔑' },
@@ -25,34 +25,44 @@ const DEFAULT_FIELDS: Record<EntryType, unknown> = {
   card:    { cardholder: '', number: '', expiry: '', cvv: '' },
 }
 
+export interface EntryFormData {
+  name: string
+  folder_id?: string
+  tags: string[]
+  notes: string
+  favorite: boolean
+  fields: unknown
+}
+
 interface CreateProps {
+  folders: Folder[]
+  defaultFolderId?: string | null
   onClose: () => void
-  onSave: (data: {
-    name: string; entry_type: EntryType; tags: string[]
-    notes: string; favorite: boolean; fields: unknown
-  }) => Promise<void>
+  onSave: (data: EntryFormData & { entry_type: EntryType }) => Promise<void>
   initialEntry?: undefined
   onUpdate?: undefined
 }
 
 interface EditProps {
+  folders: Folder[]
   onClose: () => void
   initialEntry: any
-  onUpdate: (data: {
-    name: string; tags: string[]; notes: string; favorite: boolean; fields: unknown
-  }) => Promise<void>
+  onUpdate: (data: EntryFormData) => Promise<void>
+  defaultFolderId?: undefined
   onSave?: undefined
 }
 
 type Props = CreateProps | EditProps
 
-export function EntryFormModal({ onClose, onSave, initialEntry, onUpdate }: Props) {
+export function EntryFormModal({ folders, defaultFolderId, onClose, onSave, initialEntry, onUpdate }: Props) {
   const isEdit = !!initialEntry
   const initType: EntryType = isEdit ? (initialEntry.fields?.type as EntryType) : 'login'
   const initFields = isEdit ? (initialEntry.fields?.fields ?? DEFAULT_FIELDS[initType]) : DEFAULT_FIELDS['login']
 
   const [type, setType] = useState<EntryType>(initType)
   const [name, setName] = useState(isEdit ? initialEntry.name : '')
+  const [folderId, setFolderId] = useState<string>(isEdit ? (initialEntry.folder_id ?? '') : (defaultFolderId ?? ''))
+  const [favorite, setFavorite] = useState<boolean>(isEdit ? !!initialEntry.favorite : false)
   const [tags, setTags] = useState<string[]>(isEdit ? (initialEntry.tags ?? []) : [])
   const [tagInput, setTagInput] = useState('')
   const [notes, setNotes] = useState(isEdit ? (initialEntry.notes ?? '') : '')
@@ -74,12 +84,19 @@ export function EntryFormModal({ onClose, onSave, initialEntry, onUpdate }: Prop
 
   const handleSave = async () => {
     if (!name.trim()) { setError('Name is required'); return }
+    // A tag typed but not yet added with Enter/Add is still meant to be saved.
+    const pendingTag = tagInput.trim().toLowerCase()
+    const allTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags
+    const data: EntryFormData = {
+      name: name.trim(), folder_id: folderId || undefined, tags: allTags, notes, favorite, fields,
+    }
     setSaving(true)
+    setError('')
     try {
       if (isEdit && onUpdate) {
-        await onUpdate({ name: name.trim(), tags, notes, favorite: initialEntry.favorite ?? false, fields })
+        await onUpdate(data)
       } else if (onSave) {
-        await onSave({ name: name.trim(), entry_type: type, tags, notes, favorite: false, fields })
+        await onSave({ ...data, entry_type: type })
       }
       onClose()
     } catch (e) { setError(String(e)) }
@@ -104,6 +121,22 @@ export function EntryFormModal({ onClose, onSave, initialEntry, onUpdate }: Prop
         <Field label="Name" required>
           <input className={inputCls} placeholder="e.g. GitHub Token" value={name} onChange={e => setName(e.target.value)} autoFocus />
         </Field>
+
+        <div className="flex gap-3 items-end">
+          <div className="flex-1 min-w-0">
+            <Field label="Folder">
+              <select className={inputCls} value={folderId} onChange={e => setFolderId(e.target.value)}>
+                <option value="">No folder</option>
+                {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </Field>
+          </div>
+          <button type="button" onClick={() => setFavorite(v => !v)} aria-pressed={favorite}
+            className={`shrink-0 px-3 py-2 rounded-md text-sm border transition-colors
+              ${favorite ? 'border-yellow-500 text-yellow-400 bg-yellow-500/10' : 'border-slate-600 text-slate-400 hover:text-slate-200'}`}>
+            {favorite ? '★ Favorite' : '☆ Favorite'}
+          </button>
+        </div>
 
         {type === 'login'   && <LoginForm   onChange={setFields} initial={isEdit ? initFields as any : undefined} />}
         {type === 'api_key' && <ApiKeyForm  onChange={setFields} initial={isEdit ? initFields as any : undefined} />}

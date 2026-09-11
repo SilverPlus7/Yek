@@ -3,7 +3,6 @@ pub mod commands;
 pub mod crypto;
 pub mod entries;
 pub mod settings;
-pub mod sync;
 pub mod vault;
 
 use commands::AppState;
@@ -28,12 +27,14 @@ pub fn run() {
             commands::get_entries,
             commands::get_vault_info,
             commands::get_saved_vault_path,
+            commands::read_vault_hint,
             commands::create_entry,
             commands::delete_entry,
             commands::get_entry,
             commands::get_folders,
             commands::create_folder,
             commands::check_vault_changed,
+            commands::overwrite_vault,
             commands::reload_vault,
             commands::list_backups,
             commands::update_entry,

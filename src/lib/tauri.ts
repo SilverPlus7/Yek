@@ -1,5 +1,42 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { EntryListItem, VaultInfo } from '../types'
+import type { EntryListItem, Folder, VaultInfo } from '../types'
+
+/** Dispatched on `window` when a save was refused because another device changed the vault. */
+export const VAULT_CONFLICT_EVENT = 'yek:vault-conflict'
+
+export const CONFLICT_MESSAGE =
+  'The vault was changed on another device. Choose which version to keep, then try again.'
+
+// Commands that write the vault. The backend refuses to overwrite a file another device
+// has saved; surface that as the conflict dialog instead of a raw error code.
+async function write<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args)
+  } catch (e) {
+    if (e === 'VAULT_CONFLICT') {
+      window.dispatchEvent(new Event(VAULT_CONFLICT_EVENT))
+      throw CONFLICT_MESSAGE
+    }
+    throw e
+  }
+}
+
+/** Human-readable reason an unlock/reload failed. */
+export function describeUnlockError(e: unknown): string {
+  const message = String(e)
+  if (message.includes('decryption failed')) return 'Wrong password. Please try again.'
+  return `Could not open the vault: ${message}`
+}
+
+export interface EntryPayload {
+  name: string
+  folder_id?: string
+  tags: string[]
+  notes: string
+  favorite: boolean
+  icon?: string
+  fields: unknown
+}
 
 export const tauriApi = {
   createVault: (dir: string, password: string, hint?: string) =>
@@ -19,39 +56,39 @@ export const tauriApi = {
 
   getSavedVaultPath: () => invoke<string | null>('get_saved_vault_path'),
 
-  createEntry: (payload: {
-    name: string; folder_id?: string; tags: string[]; notes: string;
-    favorite: boolean; icon?: string; entry_type: string; fields: unknown
-  }) => invoke<EntryListItem>('create_entry', { payload }),
+  readVaultHint: (path: string) => invoke<string | null>('read_vault_hint', { path }),
 
-  deleteEntry: (id: string) => invoke<void>('delete_entry', { id }),
+  createEntry: (payload: EntryPayload & { entry_type: string }) =>
+    write<EntryListItem>('create_entry', { payload }),
+
+  deleteEntry: (id: string) => write<void>('delete_entry', { id }),
 
   getEntry: (id: string) => invoke<unknown>('get_entry', { id }),
 
-  getFolders: () => invoke<Array<{ id: string; name: string; has_password: boolean }>>('get_folders'),
+  getFolders: () => invoke<Folder[]>('get_folders'),
 
-  createFolder: (name: string) =>
-    invoke<{ id: string; name: string; has_password: boolean }>('create_folder', { name }),
+  createFolder: (name: string) => write<Folder>('create_folder', { name }),
 
-  checkVaultChanged: () => invoke<number>('check_vault_changed'),
+  /** True when another device replaced the vault file since this session loaded or saved it. */
+  checkVaultChanged: () => invoke<boolean>('check_vault_changed'),
+  /** "Keep mine": write this session's data over the other device's version. */
+  overwriteVault: () => invoke<void>('overwrite_vault'),
   reloadVault: (password: string) => invoke<EntryListItem[]>('reload_vault', { password }),
   listBackups: () => invoke<string[]>('list_backups'),
 
-  updateEntry: (payload: {
-    id: string; name: string; tags: string[]; notes: string;
-    favorite: boolean; icon?: string; fields: unknown
-  }) => invoke<EntryListItem>('update_entry', { payload }),
+  updateEntry: (payload: EntryPayload & { id: string }) =>
+    write<EntryListItem>('update_entry', { payload }),
 
-  moveToTrash: (id: string) => invoke<void>('move_to_trash', { id }),
-  restoreFromTrash: (id: string) => invoke<void>('restore_from_trash', { id }),
-  deleteFromTrash: (id: string) => invoke<void>('delete_from_trash', { id }),
-  emptyTrash: () => invoke<void>('empty_trash'),
+  moveToTrash: (id: string) => write<void>('move_to_trash', { id }),
+  restoreFromTrash: (id: string) => write<EntryListItem>('restore_from_trash', { id }),
+  deleteFromTrash: (id: string) => write<void>('delete_from_trash', { id }),
+  emptyTrash: () => write<void>('empty_trash'),
   getTrash: () => invoke<EntryListItem[]>('get_trash'),
 
   attachFile: (entryId: string, path: string) =>
-    invoke<void>('attach_file', { entryId, path }),
+    write<void>('attach_file', { entryId, path }),
   downloadAttachment: (entryId: string, name: string, destPath: string) =>
     invoke<void>('download_attachment', { entryId, name, destPath }),
   removeAttachment: (entryId: string, name: string) =>
-    invoke<void>('remove_attachment', { entryId, name }),
+    write<void>('remove_attachment', { entryId, name }),
 }

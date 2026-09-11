@@ -53,6 +53,11 @@ export interface CardFields {
 export interface FileAttachment {
   name: string
   mime: string
-  content: string // base64
-  size: number    // original bytes
+  size: number // original bytes; the file content itself never leaves the Rust side
+}
+
+export interface Folder {
+  id: string
+  name: string
+  has_password: boolean
 }

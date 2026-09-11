@@ -1,10 +1,9 @@
-use crate::entries::{Entry, EntryFields};
+use crate::entries::{Entry, EntryFields, FileAttachment};
 use crate::vault::{self, VaultState};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::SystemTime;
 use tauri::State;
 use uuid::Uuid;
 
@@ -51,6 +50,45 @@ pub struct VaultInfo {
     pub is_unlocked: bool,
 }
 
+fn list_item(e: &Entry) -> EntryListItem {
+    EntryListItem {
+        id: e.base.id.to_string(),
+        name: e.base.name.clone(),
+        entry_type: e.entry_type().as_str().to_string(),
+        icon: e.base.icon.clone(),
+        folder_id: e.base.folder_id.map(|id| id.to_string()),
+        tags: e.base.tags.clone(),
+        favorite: e.base.favorite,
+        updated_at: e.base.updated_at.clone(),
+    }
+}
+
+fn parse_id(id: &str) -> Result<Uuid, String> {
+    Uuid::parse_str(id).map_err(|e| e.to_string())
+}
+
+fn parse_folder_id(id: Option<&str>) -> Option<Uuid> {
+    id.and_then(|f| Uuid::parse_str(f).ok())
+}
+
+fn parse_fields(entry_type: &str, value: serde_json::Value) -> Result<EntryFields, String> {
+    fn de<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, String> {
+        serde_json::from_value(value).map_err(|e| e.to_string())
+    }
+    Ok(match entry_type {
+        "login" => EntryFields::Login(de(value)?),
+        "api_key" => EntryFields::ApiKey(de(value)?),
+        "note" => EntryFields::Note(de(value)?),
+        "ssh_key" => EntryFields::SshKey(de(value)?),
+        "card" => EntryFields::Card(de(value)?),
+        other => return Err(format!("Unknown entry type: {other}")),
+    })
+}
+
+fn now() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
 /// Create a new vault at the given directory.
 #[tauri::command]
 pub fn create_vault(
@@ -59,23 +97,14 @@ pub fn create_vault(
     hint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<VaultInfo, String> {
-    let path = vault::create_vault(std::path::Path::new(&dir), &password, hint.clone())?;
-    let (contents, key, salt, _, created_at) = vault::load_vault(&path, &password)?;
-    let mut s = state.0.lock().unwrap();
-    s.vault_path = Some(path.clone());
-    s.key = Some(key);
-    s.salt = Some(salt);
-    s.hint = hint.clone();
-    s.created_at = Some(created_at);
-    s.contents = Some(contents);
+    let path = vault::create_vault(Path::new(&dir), &password, hint.clone())?;
+    let loaded = vault::load_vault(&path, &password)?;
+    let vault_path = path.to_string_lossy().to_string();
+    state.0.lock().unwrap().install(path, loaded);
     let _ = crate::settings::save_settings(&crate::settings::AppSettings {
-        vault_path: Some(path.to_string_lossy().to_string()),
+        vault_path: Some(vault_path.clone()),
     });
-    Ok(VaultInfo {
-        vault_path: path.to_string_lossy().to_string(),
-        hint,
-        is_unlocked: true,
-    })
+    Ok(VaultInfo { vault_path, hint, is_unlocked: true })
 }
 
 /// Unlock an existing vault.
@@ -85,15 +114,9 @@ pub fn unlock_vault(
     password: String,
     state: State<'_, AppState>,
 ) -> Result<VaultInfo, String> {
-    let p = PathBuf::from(&path);
-    let (contents, key, salt, hint, created_at) = vault::load_vault(&p, &password)?;
-    let mut s = state.0.lock().unwrap();
-    s.vault_path = Some(p);
-    s.key = Some(key);
-    s.salt = Some(salt);
-    s.hint = hint.clone();
-    s.created_at = Some(created_at);
-    s.contents = Some(contents);
+    let loaded = vault::load_vault(Path::new(&path), &password)?;
+    let hint = loaded.hint.clone();
+    state.0.lock().unwrap().install(PathBuf::from(&path), loaded);
     let _ = crate::settings::save_settings(&crate::settings::AppSettings {
         vault_path: Some(path.clone()),
     });
@@ -112,22 +135,19 @@ pub fn lock_vault(state: State<'_, AppState>) -> Result<(), String> {
 pub fn get_entries(state: State<'_, AppState>) -> Result<Vec<EntryListItem>, String> {
     let s = state.0.lock().unwrap();
     let contents = s.contents.as_ref().ok_or("Vault is locked")?;
-    Ok(contents.entries.iter().map(|e| EntryListItem {
-        id: e.base.id.to_string(),
-        name: e.base.name.clone(),
-        entry_type: e.entry_type().as_str().to_string(),
-        icon: e.base.icon.clone(),
-        folder_id: e.base.folder_id.map(|id| id.to_string()),
-        tags: e.base.tags.clone(),
-        favorite: e.base.favorite,
-        updated_at: e.base.updated_at.clone(),
-    }).collect())
+    Ok(contents.entries.iter().map(list_item).collect())
 }
 
 /// Called on app startup to restore last known vault path.
 #[tauri::command]
 pub fn get_saved_vault_path() -> Option<String> {
     crate::settings::load_settings().vault_path
+}
+
+/// Password hint of a vault file (stored unencrypted), shown on the unlock screen.
+#[tauri::command]
+pub fn read_vault_hint(path: String) -> Option<String> {
+    vault::read_hint(Path::new(&path)).ok().flatten()
 }
 
 /// Get vault status (path, hint, locked state).
@@ -159,81 +179,51 @@ pub fn create_entry(
     payload: CreateEntryPayload,
     state: State<'_, AppState>,
 ) -> Result<EntryListItem, String> {
-    let mut s = state.0.lock().unwrap();
-
-    // Extract everything before any mutable borrow of s
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    let fields: EntryFields = match payload.entry_type.as_str() {
-        "login" => EntryFields::Login(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        "api_key" => EntryFields::ApiKey(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        "note" => EntryFields::Note(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        "ssh_key" => EntryFields::SshKey(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        "card" => EntryFields::Card(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        _ => return Err(format!("Unknown entry type: {}", payload.entry_type)),
-    };
-
-    let folder_id = payload.folder_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
-    let mut entry = Entry::new(payload.name, folder_id, fields);
+    let fields = parse_fields(&payload.entry_type, payload.fields)?;
+    let mut entry = Entry::new(payload.name, parse_folder_id(payload.folder_id.as_deref()), fields);
     entry.base.tags = payload.tags;
     entry.base.notes = payload.notes;
     entry.base.favorite = payload.favorite;
     entry.base.icon = payload.icon;
-
-    let item = EntryListItem {
-        id: entry.base.id.to_string(),
-        name: entry.base.name.clone(),
-        entry_type: entry.entry_type().as_str().to_string(),
-        icon: entry.base.icon.clone(),
-        folder_id: entry.base.folder_id.map(|id| id.to_string()),
-        tags: entry.base.tags.clone(),
-        favorite: entry.base.favorite,
-        updated_at: entry.base.updated_at.clone(),
-    };
-
-    // Push (mutable borrow released at end of statement)
-    s.contents.as_mut().unwrap().entries.push(entry);
-    if let Err(e) = vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap()) {
-        s.contents.as_mut().unwrap().entries.pop();
-        return Err(e);
-    }
-
+    let item = list_item(&entry);
+    state.0.lock().unwrap().commit(|c| {
+        c.entries.push(entry);
+        Ok(())
+    })?;
     Ok(item)
 }
 
 /// Delete an entry by id and save the vault.
 #[tauri::command]
 pub fn delete_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut s = state.0.lock().unwrap();
-    let contents = s.contents.as_mut().ok_or("Vault is locked")?;
-    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
-    let before = contents.entries.len();
-    contents.entries.retain(|e| e.base.id != uuid);
-    if contents.entries.len() == before {
-        return Err("Entry not found".to_string());
-    }
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(())
+    let uuid = parse_id(&id)?;
+    state.0.lock().unwrap().commit(|c| {
+        let before = c.entries.len();
+        c.entries.retain(|e| e.base.id != uuid);
+        if c.entries.len() == before {
+            return Err("Entry not found".to_string());
+        }
+        Ok(())
+    })
 }
 
-/// Get full entry details (including secrets) by id.
+/// Get full entry details (including secrets) by id. Attachment bytes stay in Rust:
+/// the UI only needs names and sizes, and downloads go through `download_attachment`.
 #[tauri::command]
 pub fn get_entry(id: String, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let uuid = parse_id(&id)?;
     let s = state.0.lock().unwrap();
     let contents = s.contents.as_ref().ok_or("Vault is locked")?;
-    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let entry = contents.entries.iter().find(|e| e.base.id == uuid).ok_or("Entry not found")?;
-    serde_json::to_value(entry).map_err(|e| e.to_string())
+    let mut value = serde_json::to_value(entry).map_err(|e| e.to_string())?;
+    if let Some(attachments) = value.get_mut("attachments").and_then(|a| a.as_array_mut()) {
+        for attachment in attachments {
+            if let Some(obj) = attachment.as_object_mut() {
+                obj.remove("content");
+            }
+        }
+    }
+    Ok(value)
 }
 
 /// List all folders (without encrypted entry details).
@@ -250,37 +240,29 @@ pub fn get_folders(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>,
         .collect())
 }
 
-/// Returns file mtime as unix seconds (> 0 if file exists).
+/// True when another device has replaced the vault file since this session last loaded or saved it.
 #[tauri::command]
-pub fn check_vault_changed(state: State<'_, AppState>) -> u64 {
-    let s = state.0.lock().unwrap();
-    let path = match s.vault_path.as_ref() { Some(p) => p.clone(), None => return 0 };
-    crate::sync::vault_modified_at(&path)
-        .map(|m| m.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs())
-        .unwrap_or(0)
+pub fn check_vault_changed(state: State<'_, AppState>) -> bool {
+    state.0.lock().unwrap().changed_on_disk()
 }
 
-/// Reload vault from disk after conflict resolution.
+/// Resolve a conflict by writing this session's data over the file on disk ("Keep mine").
+#[tauri::command]
+pub fn overwrite_vault(state: State<'_, AppState>) -> Result<(), String> {
+    let mut s = state.0.lock().unwrap();
+    let contents = s.contents.clone().ok_or("Vault is locked")?;
+    s.write(contents, false)
+}
+
+/// Reload vault from disk after conflict resolution ("Load from disk").
 #[tauri::command]
 pub fn reload_vault(password: String, state: State<'_, AppState>) -> Result<Vec<EntryListItem>, String> {
     let mut s = state.0.lock().unwrap();
     let path = s.vault_path.clone().ok_or("No vault path")?;
-    let (contents, key, salt, hint, created_at) = vault::load_vault(&path, &password)?;
-    s.key = Some(key);
-    s.salt = Some(salt);
-    s.hint = hint;
-    s.created_at = Some(created_at);
-    s.contents = Some(contents);
-    Ok(s.contents.as_ref().unwrap().entries.iter().map(|e| EntryListItem {
-        id: e.base.id.to_string(),
-        name: e.base.name.clone(),
-        entry_type: e.entry_type().as_str().to_string(),
-        icon: e.base.icon.clone(),
-        folder_id: e.base.folder_id.map(|id| id.to_string()),
-        tags: e.base.tags.clone(),
-        favorite: e.base.favorite,
-        updated_at: e.base.updated_at.clone(),
-    }).collect())
+    let loaded = vault::load_vault(&path, &password)?;
+    let items: Vec<EntryListItem> = loaded.contents.entries.iter().map(list_item).collect();
+    s.install(path, loaded);
+    Ok(items)
 }
 
 /// List all local backup file paths (newest first).
@@ -293,6 +275,7 @@ pub fn list_backups() -> Result<Vec<String>, String> {
 pub struct UpdateEntryPayload {
     pub id: String,
     pub name: String,
+    pub folder_id: Option<String>,
     pub tags: Vec<String>,
     pub notes: String,
     pub favorite: bool,
@@ -300,144 +283,75 @@ pub struct UpdateEntryPayload {
     pub fields: serde_json::Value,
 }
 
-/// Update an existing entry (name, tags, notes, fields) and save the vault.
+/// Update an existing entry (name, folder, tags, notes, fields) and save the vault.
 #[tauri::command]
 pub fn update_entry(
     payload: UpdateEntryPayload,
     state: State<'_, AppState>,
 ) -> Result<EntryListItem, String> {
-    let mut s = state.0.lock().unwrap();
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    let uuid = Uuid::parse_str(&payload.id).map_err(|e| e.to_string())?;
-    let entry_type = s.contents.as_ref().unwrap().entries
-        .iter().find(|e| e.base.id == uuid)
-        .ok_or("Entry not found")?.entry_type();
-
-    let new_fields: EntryFields = match entry_type {
-        crate::entries::EntryType::Login =>
-            EntryFields::Login(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        crate::entries::EntryType::ApiKey =>
-            EntryFields::ApiKey(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        crate::entries::EntryType::Note =>
-            EntryFields::Note(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        crate::entries::EntryType::SshKey =>
-            EntryFields::SshKey(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-        crate::entries::EntryType::Card =>
-            EntryFields::Card(serde_json::from_value(payload.fields).map_err(|e| e.to_string())?),
-    };
-
-    {
-        let entry = s.contents.as_mut().unwrap().entries
-            .iter_mut().find(|e| e.base.id == uuid).unwrap();
+    let uuid = parse_id(&payload.id)?;
+    state.0.lock().unwrap().commit(|c| {
+        let entry = c.entries.iter_mut().find(|e| e.base.id == uuid).ok_or("Entry not found")?;
+        entry.fields = parse_fields(entry.entry_type().as_str(), payload.fields)?;
         entry.base.name = payload.name;
+        entry.base.folder_id = parse_folder_id(payload.folder_id.as_deref());
         entry.base.tags = payload.tags;
         entry.base.notes = payload.notes;
         entry.base.favorite = payload.favorite;
         entry.base.icon = payload.icon;
-        entry.base.updated_at = chrono::Utc::now().to_rfc3339();
-        entry.fields = new_fields;
-    }
-
-    let item = {
-        let e = s.contents.as_ref().unwrap().entries
-            .iter().find(|e| e.base.id == uuid).unwrap();
-        EntryListItem {
-            id: e.base.id.to_string(),
-            name: e.base.name.clone(),
-            entry_type: e.entry_type().as_str().to_string(),
-            icon: e.base.icon.clone(),
-            folder_id: e.base.folder_id.map(|id| id.to_string()),
-            tags: e.base.tags.clone(),
-            favorite: e.base.favorite,
-            updated_at: e.base.updated_at.clone(),
-        }
-    };
-
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(item)
+        entry.base.updated_at = now();
+        Ok(list_item(entry))
+    })
 }
 
 /// Move an entry to trash (soft delete).
 #[tauri::command]
 pub fn move_to_trash(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut s = state.0.lock().unwrap();
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
-    let pos = s.contents.as_ref().unwrap().entries.iter().position(|e| e.base.id == uuid)
-        .ok_or("Entry not found")?;
-    let entry = s.contents.as_mut().unwrap().entries.remove(pos);
-    s.contents.as_mut().unwrap().trash.push(entry);
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(())
+    let uuid = parse_id(&id)?;
+    state.0.lock().unwrap().commit(|c| {
+        let pos = c.entries.iter().position(|e| e.base.id == uuid).ok_or("Entry not found")?;
+        let mut entry = c.entries.remove(pos);
+        // The trash list shows this as the deletion date.
+        entry.base.updated_at = now();
+        c.trash.push(entry);
+        Ok(())
+    })
 }
 
 /// Restore an entry from trash back to the main entries list.
 #[tauri::command]
-pub fn restore_from_trash(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut s = state.0.lock().unwrap();
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
-    let pos = s.contents.as_ref().unwrap().trash.iter().position(|e| e.base.id == uuid)
-        .ok_or("Entry not found in trash")?;
-    let entry = s.contents.as_mut().unwrap().trash.remove(pos);
-    s.contents.as_mut().unwrap().entries.push(entry);
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(())
+pub fn restore_from_trash(id: String, state: State<'_, AppState>) -> Result<EntryListItem, String> {
+    let uuid = parse_id(&id)?;
+    state.0.lock().unwrap().commit(|c| {
+        let pos = c.trash.iter().position(|e| e.base.id == uuid).ok_or("Entry not found in trash")?;
+        let entry = c.trash.remove(pos);
+        let item = list_item(&entry);
+        c.entries.push(entry);
+        Ok(item)
+    })
 }
 
 /// Permanently delete one entry from trash.
 #[tauri::command]
 pub fn delete_from_trash(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut s = state.0.lock().unwrap();
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
-    let before = s.contents.as_ref().unwrap().trash.len();
-    s.contents.as_mut().unwrap().trash.retain(|e| e.base.id != uuid);
-    if s.contents.as_ref().unwrap().trash.len() == before {
-        return Err("Entry not found in trash".to_string());
-    }
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(())
+    let uuid = parse_id(&id)?;
+    state.0.lock().unwrap().commit(|c| {
+        let before = c.trash.len();
+        c.trash.retain(|e| e.base.id != uuid);
+        if c.trash.len() == before {
+            return Err("Entry not found in trash".to_string());
+        }
+        Ok(())
+    })
 }
 
 /// Permanently delete all items in trash.
 #[tauri::command]
 pub fn empty_trash(state: State<'_, AppState>) -> Result<(), String> {
-    let mut s = state.0.lock().unwrap();
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    s.contents.as_mut().unwrap().trash.clear();
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(())
+    state.0.lock().unwrap().commit(|c| {
+        c.trash.clear();
+        Ok(())
+    })
 }
 
 /// Return display-ready trash item list.
@@ -445,56 +359,36 @@ pub fn empty_trash(state: State<'_, AppState>) -> Result<(), String> {
 pub fn get_trash(state: State<'_, AppState>) -> Result<Vec<EntryListItem>, String> {
     let s = state.0.lock().unwrap();
     let contents = s.contents.as_ref().ok_or("Vault is locked")?;
-    Ok(contents.trash.iter().map(|e| EntryListItem {
-        id: e.base.id.to_string(),
-        name: e.base.name.clone(),
-        entry_type: e.entry_type().as_str().to_string(),
-        icon: e.base.icon.clone(),
-        folder_id: e.base.folder_id.map(|id| id.to_string()),
-        tags: e.base.tags.clone(),
-        favorite: e.base.favorite,
-        updated_at: e.base.updated_at.clone(),
-    }).collect())
+    Ok(contents.trash.iter().map(list_item).collect())
 }
 
 /// Attach a file (by path) to an entry — reads, base64-encodes, stores inside vault.
 #[tauri::command]
 pub fn attach_file(entry_id: String, path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let uuid = parse_id(&entry_id)?;
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     if bytes.len() > MAX_ATTACHMENT_BYTES {
-        return Err(format!(
-            "File too large: {} KB (max 500 KB)",
-            bytes.len() / 1024
-        ));
+        return Err(format!("File too large: {} KB (max 500 KB)", bytes.len() / 1024));
     }
-    let file_name = std::path::Path::new(&path)
+    let name = Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".to_string());
-    let mime = mime_for_filename(&file_name);
-    let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let attachment = crate::entries::FileAttachment { name: file_name, mime, content, size: bytes.len() };
-
-    let mut s = state.0.lock().unwrap();
-    let vault_path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    let uuid = Uuid::parse_str(&entry_id).map_err(|e| e.to_string())?;
-    let entry = s.contents.as_mut().unwrap().entries
-        .iter_mut().find(|e| e.base.id == uuid)
-        .ok_or("Entry not found")?;
-    if entry.base.attachments.iter().any(|a| a.name == attachment.name) {
-        return Err(format!("Attachment '{}' already exists", attachment.name));
-    }
-    entry.base.attachments.push(attachment);
-    entry.base.updated_at = chrono::Utc::now().to_rfc3339();
-
-    vault::save_vault(&vault_path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(())
+    let attachment = FileAttachment {
+        mime: mime_for_filename(&name),
+        content: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        size: bytes.len(),
+        name,
+    };
+    state.0.lock().unwrap().commit(|c| {
+        let entry = c.entries.iter_mut().find(|e| e.base.id == uuid).ok_or("Entry not found")?;
+        if entry.base.attachments.iter().any(|a| a.name == attachment.name) {
+            return Err(format!("An attachment named '{}' already exists", attachment.name));
+        }
+        entry.base.attachments.push(attachment);
+        entry.base.updated_at = now();
+        Ok(())
+    })
 }
 
 /// Write an attachment's decoded bytes to dest_path on disk.
@@ -505,9 +399,9 @@ pub fn download_attachment(
     dest_path: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let uuid = parse_id(&entry_id)?;
     let s = state.0.lock().unwrap();
     let contents = s.contents.as_ref().ok_or("Vault is locked")?;
-    let uuid = Uuid::parse_str(&entry_id).map_err(|e| e.to_string())?;
     let entry = contents.entries.iter().find(|e| e.base.id == uuid).ok_or("Entry not found")?;
     let att = entry.base.attachments.iter().find(|a| a.name == name).ok_or("Attachment not found")?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(&att.content).map_err(|e| e.to_string())?;
@@ -518,49 +412,34 @@ pub fn download_attachment(
 /// Remove an attachment from an entry and save the vault.
 #[tauri::command]
 pub fn remove_attachment(entry_id: String, name: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut s = state.0.lock().unwrap();
-    let vault_path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    if s.contents.is_none() { return Err("Vault is locked".to_string()); }
-
-    let uuid = Uuid::parse_str(&entry_id).map_err(|e| e.to_string())?;
-    let entry = s.contents.as_mut().unwrap().entries
-        .iter_mut().find(|e| e.base.id == uuid)
-        .ok_or("Entry not found")?;
-    let before = entry.base.attachments.len();
-    entry.base.attachments.retain(|a| a.name != name);
-    if entry.base.attachments.len() == before {
-        return Err("Attachment not found".to_string());
-    }
-    entry.base.updated_at = chrono::Utc::now().to_rfc3339();
-
-    vault::save_vault(&vault_path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
-    Ok(())
+    let uuid = parse_id(&entry_id)?;
+    state.0.lock().unwrap().commit(|c| {
+        let entry = c.entries.iter_mut().find(|e| e.base.id == uuid).ok_or("Entry not found")?;
+        let before = entry.base.attachments.len();
+        entry.base.attachments.retain(|a| a.name != name);
+        if entry.base.attachments.len() == before {
+            return Err("Attachment not found".to_string());
+        }
+        entry.base.updated_at = now();
+        Ok(())
+    })
 }
 
 /// Create a new folder and save the vault.
 #[tauri::command]
 pub fn create_folder(name: String, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let mut s = state.0.lock().unwrap();
-    let contents = s.contents.as_mut().ok_or("Vault is locked")?;
     let folder = crate::vault::Folder {
         id: Uuid::new_v4(),
-        name: name.clone(),
+        name,
         password_salt: None,
         password_nonce: None,
         encrypted_entries: None,
         entry_ids: vec![],
     };
     let result = serde_json::json!({ "id": folder.id.to_string(), "name": folder.name, "has_password": false });
-    contents.folders.push(folder);
-    let path = s.vault_path.clone().ok_or("No vault path")?;
-    let key = *s.key.as_ref().ok_or("No key")?;
-    let salt = s.salt.clone().ok_or("No salt")?;
-    let hint = s.hint.clone();
-    let created_at = s.created_at.clone().ok_or("No created_at")?;
-    vault::save_vault(&path, &key, &salt, hint, &created_at, s.contents.as_ref().unwrap())?;
+    state.0.lock().unwrap().commit(|c| {
+        c.folders.push(folder);
+        Ok(())
+    })?;
     Ok(result)
 }

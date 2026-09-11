@@ -1,26 +1,8 @@
 import { useState, useCallback } from 'react'
 import { Modal } from '../ui/Modal'
 import { inputCls } from '../forms/Field'
-
-interface Options {
-  length: number
-  uppercase: boolean
-  lowercase: boolean
-  numbers: boolean
-  symbols: boolean
-}
-
-function generate(opts: Options): string {
-  let chars = ''
-  if (opts.uppercase) chars += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-  if (opts.lowercase) chars += 'abcdefghijklmnopqrstuvwxyz'
-  if (opts.numbers)   chars += '0123456789'
-  if (opts.symbols)   chars += '!@#$%^&*()_+-=[]{}|;:,.<>?'
-  if (!chars) chars = 'abcdefghijklmnopqrstuvwxyz'
-  const buf = new Uint32Array(opts.length)
-  crypto.getRandomValues(buf)
-  return Array.from(buf, n => chars[n % chars.length]).join('')
-}
+import { copySecret } from '../../lib/clipboard'
+import { generatePassword as generate, hasCharSet, type PasswordOptions as Options } from '../../lib/password'
 
 function strength(opts: Options): { label: string; bars: number; color: string } {
   let s = 0
@@ -57,6 +39,7 @@ export function PasswordGenerator({ onClose, onCreateLogin }: Props) {
 
   const updateOpt = <K extends keyof Options>(k: K, v: Options[K]) => {
     const next = { ...opts, [k]: v }
+    if (!hasCharSet(next)) return // keep at least one character type selected
     setOpts(next)
     setPassword(generate(next))
     setCopied(false)
@@ -68,7 +51,7 @@ export function PasswordGenerator({ onClose, onCreateLogin }: Props) {
   }, [opts])
 
   const copy = async () => {
-    await navigator.clipboard.writeText(password)
+    await copySecret(password)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

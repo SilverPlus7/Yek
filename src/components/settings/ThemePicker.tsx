@@ -21,7 +21,7 @@ const THEMES: Array<{
   {
     value: "high-contrast",
     label: "🔳 High Contrast",
-    description: "WCAG AAA, easy on eyes",
+    description: "Pure black, brighter text",
     preview: "bg-black border-white",
   },
   {

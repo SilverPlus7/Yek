@@ -25,4 +25,14 @@ describe('useClipboard', () => {
     expect(result.current.copied).toBe(false)
     vi.useRealTimers()
   })
+
+  it('still wipes the clipboard after the component that copied unmounts', async () => {
+    vi.useFakeTimers()
+    const { result, unmount } = renderHook(() => useClipboard(500))
+    await act(async () => { await result.current.copy('secret') })
+    unmount()
+    vi.advanceTimersByTime(600)
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith('')
+    vi.useRealTimers()
+  })
 })

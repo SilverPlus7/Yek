@@ -2,16 +2,17 @@ import { useMemo } from 'react'
 import { EntryRow } from '../entries/EntryRow'
 import { useVaultStore } from '../../store/vault'
 import { useUiStore } from '../../store/ui'
-import type { EntryListItem } from '../../types'
+import type { EntryListItem, Folder } from '../../types'
 
 interface Props {
+  folders: Folder[]
   onAdd: () => void
   onGeneratePassword: () => void
   onSelect: (id: string) => void
   onCopy: (id: string) => void
 }
 
-export function EntryList({ onAdd, onGeneratePassword, onSelect, onCopy }: Props) {
+export function EntryList({ folders, onAdd, onGeneratePassword, onSelect, onCopy }: Props) {
   const entries = useVaultStore(s => s.entries)
   const selectedId = useVaultStore(s => s.selectedEntryId)
   const { sidebarFilter, selectedFolderId } = useUiStore()
@@ -27,7 +28,7 @@ export function EntryList({ onAdd, onGeneratePassword, onSelect, onCopy }: Props
 
   const title = sidebarFilter === 'all' ? 'All Items'
     : sidebarFilter === 'favorites' ? 'Favorites'
-    : sidebarFilter === 'folder' ? 'Folder'
+    : sidebarFilter === 'folder' ? (folders.find(f => f.id === selectedFolderId)?.name ?? 'Folder')
     : sidebarFilter.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()) + 's'
 
   return (

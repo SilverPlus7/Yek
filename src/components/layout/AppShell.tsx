@@ -1,35 +1,53 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Sidebar } from './Sidebar'
 import { EntryList } from './EntryList'
 import { DetailPanel } from '../entries/DetailPanel'
 import { TrashPanel } from '../entries/TrashPanel'
-import { EntryFormModal } from '../forms/EntryFormModal'
+import { EntryFormModal, type EntryFormData } from '../forms/EntryFormModal'
 import { PasswordGenerator } from '../tools/PasswordGenerator'
 import { ResizeDivider } from '../ui/ResizeDivider'
 import { CommandPalette } from '../ui/CommandPalette'
 import { ConflictDialog } from '../ui/ConflictDialog'
 import { SettingsPanel } from '../settings/SettingsPanel'
-import { tauriApi } from '../../lib/tauri'
+import { CONFLICT_MESSAGE, VAULT_CONFLICT_EVENT, tauriApi } from '../../lib/tauri'
+import { clearCopiedSecret, copySecret } from '../../lib/clipboard'
 import { useVaultStore } from '../../store/vault'
 import { useUiStore } from '../../store/ui'
-import type { EntryListItem, EntryType } from '../../types'
+import type { EntryListItem, EntryType, Folder } from '../../types'
 
 const SIDEBAR_MIN = 160
 const SIDEBAR_MAX = 360
 const ENTRY_LIST_MIN = 180
 const ENTRY_LIST_MAX = 480
 
-function loadWidth(key: string, def: number): number {
-  try { return Math.max(SIDEBAR_MIN, parseInt(localStorage.getItem(key) || '') || def) } catch { return def }
+function loadWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const saved = parseInt(localStorage.getItem(key) ?? '', 10)
+    return Math.min(max, Math.max(min, Number.isNaN(saved) ? fallback : saved))
+  } catch { return fallback }
+}
+
+function saveWidth(key: string, width: number) {
+  try { localStorage.setItem(key, String(width)) } catch {}
+}
+
+// Handlers read the store after their await instead of the render-time `entries` snapshot,
+// otherwise two overlapping operations would overwrite each other's list update.
+const latestEntries = () => useVaultStore.getState().entries
+
+function reportError(action: string, e: unknown) {
+  // A conflict already opens the conflict dialog, which explains what happened.
+  if (e === CONFLICT_MESSAGE) return
+  alert(`${action} failed: ${String(e)}`)
 }
 
 interface Props { onLock: () => void }
 
 export function AppShell({ onLock }: Props) {
   const { entries, setEntries, selectedEntryId, setSelectedEntryId } = useVaultStore()
-  const { sidebarFilter } = useUiStore()
+  const { sidebarFilter, setSidebarFilter, selectedFolderId } = useUiStore()
 
-  const [folders, setFolders] = useState<Array<{ id: string; name: string; has_password: boolean }>>([])
+  const [folders, setFolders] = useState<Folder[]>([])
   const [trashItems, setTrashItems] = useState<EntryListItem[]>([])
   const [showAdd, setShowAdd] = useState(false)
   const [showPasswordGen, setShowPasswordGen] = useState(false)
@@ -38,45 +56,44 @@ export function AppShell({ onLock }: Props) {
   const [showPalette, setShowPalette] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showConflict, setShowConflict] = useState(false)
-  const lastKnownMtime = useRef(0)
 
-  // Resizable columns
-  const [sidebarWidth, setSidebarWidth] = useState(() => loadWidth('yek-sidebar-w', 192))
-  const [entryListWidth, setEntryListWidth] = useState(() => loadWidth('yek-entrylist-w', 240))
+  const [sidebarWidth, setSidebarWidth] = useState(() => loadWidth('yek-sidebar-w', 192, SIDEBAR_MIN, SIDEBAR_MAX))
+  const [entryListWidth, setEntryListWidth] = useState(() => loadWidth('yek-entrylist-w', 240, ENTRY_LIST_MIN, ENTRY_LIST_MAX))
 
   const resizeSidebar = (delta: number) =>
     setSidebarWidth(w => {
       const next = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, w + delta))
-      try { localStorage.setItem('yek-sidebar-w', String(next)) } catch {}
+      saveWidth('yek-sidebar-w', next)
       return next
     })
 
   const resizeEntryList = (delta: number) =>
     setEntryListWidth(w => {
       const next = Math.max(ENTRY_LIST_MIN, Math.min(ENTRY_LIST_MAX, w + delta))
-      try { localStorage.setItem('yek-entrylist-w', String(next)) } catch {}
+      saveWidth('yek-entrylist-w', next)
       return next
     })
 
-  useEffect(() => {
+  const loadFoldersAndTrash = useCallback(() => {
     tauriApi.getFolders().then(setFolders).catch(console.error)
     tauriApi.getTrash().then(setTrashItems).catch(console.error)
   }, [])
 
+  useEffect(() => { loadFoldersAndTrash() }, [loadFoldersAndTrash])
+
+  // The backend tracks which version of the vault file it last loaded or saved, so this
+  // only fires for changes made elsewhere — never for this window's own saves.
   useEffect(() => {
-    const onFocus = async () => {
-      try {
-        const mtime = await tauriApi.checkVaultChanged()
-        if (mtime > 0 && lastKnownMtime.current > 0 && mtime !== lastKnownMtime.current) {
-          setShowConflict(true)
-        }
-        if (mtime > 0 && lastKnownMtime.current === 0) {
-          lastKnownMtime.current = mtime
-        }
-      } catch {}
+    const onFocus = () => {
+      tauriApi.checkVaultChanged().then(changed => { if (changed) setShowConflict(true) }).catch(() => {})
     }
+    const onConflict = () => setShowConflict(true)
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    window.addEventListener(VAULT_CONFLICT_EVENT, onConflict)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener(VAULT_CONFLICT_EVENT, onConflict)
+    }
   }, [])
 
   useEffect(() => {
@@ -95,93 +112,91 @@ export function AppShell({ onLock }: Props) {
     return acc
   }, {} as Record<string, number>)
 
-  const refreshMtime = () =>
-    tauriApi.checkVaultChanged().then(m => { lastKnownMtime.current = m }).catch(() => {})
+  const currentFolderId = sidebarFilter === 'folder' ? selectedFolderId : null
 
-  const handleSaveEntry = async (data: {
-    name: string; entry_type: EntryType; tags: string[]
-    notes: string; favorite: boolean; fields: unknown
-  }) => {
-    const item = await tauriApi.createEntry({
-      name: data.name, entry_type: data.entry_type, tags: data.tags,
-      notes: data.notes, favorite: data.favorite, fields: data.fields,
-    })
-    setEntries([...entries, item])
-    refreshMtime()
+  const handleSaveEntry = async (data: EntryFormData & { entry_type: EntryType }) => {
+    const item = await tauriApi.createEntry(data)
+    setEntries([...latestEntries(), item])
   }
 
   const handleEdit = async (id: string) => {
     try {
-      const entry = await tauriApi.getEntry(id)
-      setEditingEntry(entry)
+      setEditingEntry(await tauriApi.getEntry(id))
     } catch (e) {
-      console.error('Failed to load entry for edit:', e)
+      reportError('Opening the entry', e)
     }
   }
 
-  const handleUpdate = async (data: {
-    name: string; tags: string[]; notes: string; favorite: boolean; fields: unknown
-  }) => {
+  const handleUpdate = async (data: EntryFormData) => {
     if (!editingEntry) return
-    const updated = await tauriApi.updateEntry({
-      id: editingEntry.id,
-      name: data.name, tags: data.tags, notes: data.notes,
-      favorite: data.favorite, icon: editingEntry.icon, fields: data.fields,
-    })
-    setEntries(entries.map(e => e.id === updated.id ? updated : e))
+    const updated = await tauriApi.updateEntry({ ...data, id: editingEntry.id, icon: editingEntry.icon ?? undefined })
+    setEntries(latestEntries().map(e => e.id === updated.id ? updated : e))
     setEditingEntry(null)
-    // Bump reload key so DetailPanel re-fetches with the updated data
     setDetailReloadKey(k => k + 1)
-    refreshMtime()
   }
 
   const handleCreateLogin = async (data: { name: string; username: string; url: string; password: string }) => {
     const item = await tauriApi.createEntry({
       name: data.name, entry_type: 'login', tags: [], notes: '', favorite: false,
+      folder_id: currentFolderId ?? undefined,
       fields: { url: data.url, username: data.username, password: data.password },
     })
-    setEntries([...entries, item])
-    refreshMtime()
+    setEntries([...latestEntries(), item])
   }
 
   const handleMoveToTrash = async (id: string) => {
-    await tauriApi.moveToTrash(id)
-    const moved = entries.find(e => e.id === id)
-    setEntries(entries.filter(e => e.id !== id))
-    if (moved) setTrashItems(prev => [...prev, moved])
-    if (selectedEntryId === id) setSelectedEntryId(null)
-    refreshMtime()
+    try {
+      await tauriApi.moveToTrash(id)
+    } catch (e) {
+      reportError('Moving the entry to trash', e)
+      return
+    }
+    setEntries(latestEntries().filter(e => e.id !== id))
+    if (useVaultStore.getState().selectedEntryId === id) setSelectedEntryId(null)
+    tauriApi.getTrash().then(setTrashItems).catch(console.error)
   }
 
   const handleRestore = async (id: string) => {
-    await tauriApi.restoreFromTrash(id)
-    const restored = trashItems.find(e => e.id === id)
-    setTrashItems(prev => prev.filter(e => e.id !== id))
-    if (restored) setEntries([...entries, restored])
-    refreshMtime()
+    try {
+      const restored = await tauriApi.restoreFromTrash(id)
+      setTrashItems(prev => prev.filter(e => e.id !== id))
+      setEntries([...latestEntries(), restored])
+    } catch (e) {
+      reportError('Restoring the entry', e)
+    }
   }
 
   const handleDeleteForever = async (id: string) => {
-    await tauriApi.deleteFromTrash(id)
-    setTrashItems(prev => prev.filter(e => e.id !== id))
-    refreshMtime()
+    try {
+      await tauriApi.deleteFromTrash(id)
+      setTrashItems(prev => prev.filter(e => e.id !== id))
+    } catch (e) {
+      reportError('Deleting the entry', e)
+    }
   }
 
   const handleEmptyTrash = async () => {
-    await tauriApi.emptyTrash()
-    setTrashItems([])
-    refreshMtime()
+    try {
+      await tauriApi.emptyTrash()
+      setTrashItems([])
+    } catch (e) {
+      reportError('Emptying the trash', e)
+    }
   }
 
   const handleNewFolder = async () => {
     const name = prompt('Folder name:')
     if (!name?.trim()) return
-    const folder = await tauriApi.createFolder(name.trim())
-    setFolders(prev => [...prev, folder])
-    refreshMtime()
+    try {
+      const folder = await tauriApi.createFolder(name.trim())
+      setFolders(prev => [...prev, folder])
+    } catch (e) {
+      reportError('Creating the folder', e)
+    }
   }
 
   const handleLock = async () => {
+    clearCopiedSecret()
     await tauriApi.lockVault()
     onLock()
   }
@@ -190,16 +205,38 @@ export function AppShell({ onLock }: Props) {
     try {
       const entry = await tauriApi.getEntry(id) as any
       const fields = entry?.fields?.fields
-      if (!fields) return
-      const ft = entry?.fields?.type
-      const val = ft === 'login' ? fields.password
-        : ft === 'api_key' ? fields.key
-        : ft === 'card' ? fields.number
-        : ft === 'ssh_key' ? fields.private_key
-        : ft === 'note' ? fields.content
+      const type = entry?.fields?.type
+      const value = type === 'login' ? fields?.password
+        : type === 'api_key' ? fields?.key
+        : type === 'card' ? fields?.number
+        : type === 'ssh_key' ? fields?.private_key
+        : type === 'note' ? fields?.content
         : ''
-      if (val) await navigator.clipboard.writeText(val)
-    } catch {}
+      if (value) await copySecret(value)
+    } catch (e) {
+      reportError('Copying', e)
+    }
+  }
+
+  const handlePaletteSelect = (id: string) => {
+    // The detail panel is hidden while Trash is open, so show the entry in All Items.
+    if (sidebarFilter === 'trash') setSidebarFilter('all')
+    setSelectedEntryId(id)
+  }
+
+  const handleKeepMine = async () => {
+    await tauriApi.overwriteVault()
+    setShowConflict(false)
+  }
+
+  const handleLoadFromDisk = async (password: string) => {
+    const reloaded = await tauriApi.reloadVault(password)
+    setEntries(reloaded)
+    const selected = useVaultStore.getState().selectedEntryId
+    if (selected && !reloaded.some(e => e.id === selected)) setSelectedEntryId(null)
+    loadFoldersAndTrash()
+    setDetailReloadKey(k => k + 1)
+    setShowConflict(false)
   }
 
   return (
@@ -213,6 +250,7 @@ export function AppShell({ onLock }: Props) {
           onLock={handleLock}
           onNewFolder={handleNewFolder}
           onSettings={() => setShowSettings(true)}
+          onSearch={() => setShowPalette(true)}
         />
       </div>
 
@@ -230,6 +268,7 @@ export function AppShell({ onLock }: Props) {
           {/* Entry list — resizable */}
           <div style={{ width: entryListWidth }} className="shrink-0 flex flex-col overflow-hidden">
             <EntryList
+              folders={folders}
               onAdd={() => setShowAdd(true)}
               onGeneratePassword={() => setShowPasswordGen(true)}
               onSelect={setSelectedEntryId}
@@ -246,46 +285,40 @@ export function AppShell({ onLock }: Props) {
               reloadKey={detailReloadKey}
               onEdit={handleEdit}
               onDelete={handleMoveToTrash}
-              onVaultSaved={refreshMtime}
             />
           </div>
         </>
       )}
 
       {showAdd && (
-        <EntryFormModal onClose={() => setShowAdd(false)} onSave={handleSaveEntry} />
+        <EntryFormModal
+          folders={folders}
+          defaultFolderId={currentFolderId}
+          onClose={() => setShowAdd(false)}
+          onSave={handleSaveEntry}
+        />
       )}
       {showPasswordGen && (
         <PasswordGenerator onClose={() => setShowPasswordGen(false)} onCreateLogin={handleCreateLogin} />
       )}
       {editingEntry && (
         <EntryFormModal
-          onClose={() => setEditingEntry(null)}
+          folders={folders}
           initialEntry={editingEntry}
+          onClose={() => setEditingEntry(null)}
           onUpdate={handleUpdate}
         />
       )}
       {showPalette && (
         <CommandPalette
           entries={entries}
-          onSelect={id => { setSelectedEntryId(id); setShowPalette(false) }}
+          onSelect={handlePaletteSelect}
           onClose={() => setShowPalette(false)}
         />
       )}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} onLock={handleLock} />}
       {showConflict && (
-        <ConflictDialog
-          onKeepMine={async () => {
-            setShowConflict(false)
-            try { lastKnownMtime.current = await tauriApi.checkVaultChanged() } catch {}
-          }}
-          onLoadFromDisk={async (pw: string) => {
-            const reloaded = await tauriApi.reloadVault(pw)
-            setEntries(reloaded)
-            setShowConflict(false)
-            lastKnownMtime.current = await tauriApi.checkVaultChanged()
-          }}
-        />
+        <ConflictDialog onKeepMine={handleKeepMine} onLoadFromDisk={handleLoadFromDisk} />
       )}
     </div>
   )

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
+import { CLIPBOARD_CLEAR_MS, copySecret } from '../lib/clipboard'
 
-export function useClipboard(clearAfterMs = 30_000) {
+export function useClipboard(clearAfterMs = CLIPBOARD_CLEAR_MS) {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -9,13 +10,10 @@ export function useClipboard(clearAfterMs = 30_000) {
   }, [])
 
   const copy = async (text: string) => {
-    await navigator.clipboard.writeText(text)
+    await copySecret(text, clearAfterMs)
     setCopied(true)
     if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => {
-      setCopied(false)
-      navigator.clipboard.writeText('').catch(() => {})
-    }, clearAfterMs)
+    timer.current = setTimeout(() => setCopied(false), clearAfterMs)
   }
 
   return { copy, copied }
