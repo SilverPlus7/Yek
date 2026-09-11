@@ -7,6 +7,7 @@ interface Props {
   entryId: string
   attachments: FileAttachment[]
   onChanged: () => void
+  onVaultSaved?: () => void
 }
 
 function formatSize(bytes: number): string {
@@ -15,7 +16,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function AttachmentSection({ entryId, attachments, onChanged }: Props) {
+export function AttachmentSection({ entryId, attachments, onChanged, onVaultSaved }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -27,6 +28,7 @@ export function AttachmentSection({ entryId, attachments, onChanged }: Props) {
     setBusy(true)
     try {
       await tauriApi.attachFile(entryId, filePath)
+      onVaultSaved?.()
       onChanged()
     } catch (e: any) {
       setError(String(e))
@@ -56,6 +58,7 @@ export function AttachmentSection({ entryId, attachments, onChanged }: Props) {
     setBusy(true)
     try {
       await tauriApi.removeAttachment(entryId, name)
+      onVaultSaved?.()
       onChanged()
     } catch (e: any) {
       setError(String(e))

@@ -246,6 +246,7 @@ export function AppShell({ onLock }: Props) {
               reloadKey={detailReloadKey}
               onEdit={handleEdit}
               onDelete={handleMoveToTrash}
+              onVaultSaved={refreshMtime}
             />
           </div>
         </>
@@ -278,15 +279,11 @@ export function AppShell({ onLock }: Props) {
             setShowConflict(false)
             try { lastKnownMtime.current = await tauriApi.checkVaultChanged() } catch {}
           }}
-          onLoadFromDisk={async () => {
-            const pw = prompt('Enter master password to reload vault:')
-            if (!pw) return
-            try {
-              const reloaded = await tauriApi.reloadVault(pw)
-              setEntries(reloaded)
-              setShowConflict(false)
-              lastKnownMtime.current = await tauriApi.checkVaultChanged()
-            } catch { alert('Wrong password or vault error') }
+          onLoadFromDisk={async (pw: string) => {
+            const reloaded = await tauriApi.reloadVault(pw)
+            setEntries(reloaded)
+            setShowConflict(false)
+            lastKnownMtime.current = await tauriApi.checkVaultChanged()
           }}
         />
       )}

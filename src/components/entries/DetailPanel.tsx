@@ -12,9 +12,10 @@ interface Props {
   reloadKey?: number
   onEdit: (id: string) => void
   onDelete: (id: string) => void
+  onVaultSaved?: () => void
 }
 
-export function DetailPanel({ entryId, reloadKey, onEdit, onDelete }: Props) {
+export function DetailPanel({ entryId, reloadKey, onEdit, onDelete, onVaultSaved }: Props) {
   const [entry, setEntry] = useState<any>(null)
 
   const fetchEntry = (id: string) => tauriApi.getEntry(id).then(setEntry).catch(console.error)
@@ -57,6 +58,7 @@ export function DetailPanel({ entryId, reloadKey, onEdit, onDelete }: Props) {
       entryId={entryId}
       attachments={entry.attachments ?? []}
       onChanged={() => fetchEntry(entryId)}
+      onVaultSaved={onVaultSaved}
     />
   )
 
